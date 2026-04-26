@@ -3,11 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Villager's Survival- HTML5 Canvas</title>
+    <title>Sobrevivência Musical - HTML5 Canvas</title>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #55aa55; font-family: 'Segoe UI', Tahoma, sans-serif; touch-action: none; overscroll-behavior-y: contain; }}
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; 
+            background-color: #55aa55; font-family: 'Segoe UI', Tahoma, sans-serif; 
+            touch-action: none; 
+            overscroll-behavior-y: contain; 
+        }
         #gameCanvas { display: block; width: 100%; height: 100%; }
+
+        /* Aviso de Orientação - Aparece apenas no modo Retrato em telas menores */
+        #orientation-warning {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #111; color: #fff; z-index: 9999;
+            flex-direction: column; justify-content: center; align-items: center;
+            text-align: center; font-size: 22px; font-weight: bold; padding: 20px;
+        }
+        .rotate-icon { font-size: 50px; margin-bottom: 20px; animation: spin 2s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(90deg); } }
+
+        @media screen and (orientation: portrait) and (max-width: 768px) {
+            #orientation-warning { display: flex; }
+            #ui-layer { display: none !important; }
+        }
 
         /* UI Base */
         #ui-layer {
@@ -32,7 +52,7 @@
         #en-fill { background: #ffeb3b; }
 
         /* Alerts */
-        #top-alerts { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; }
+        #top-alerts { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; pointer-events: none;}
         .alert-box {
             background: rgba(244, 67, 54, 0.9); color: white; padding: 5px 15px; border-radius: 5px;
             font-weight: bold; font-size: 14px; display: none; text-align: center; border: 2px solid #b71c1c; box-shadow: 0 4px 6px rgba(0,0,0,0.5);
@@ -41,43 +61,44 @@
         #faint-alert { background: rgba(156, 39, 176, 0.9); border-color: #4a148c; }
 
         /* Controls */
-        .controls-area { display: flex; justify-content: space-between; padding: 20px; align-items: flex-end; position: relative; }
+        .controls-area { display: flex; justify-content: space-between; padding: 20px; align-items: flex-end; position: relative; height: 100%; padding-bottom: 30px;}
         
         #joystick-zone {
-            width: 130px; height: 130px; background: rgba(255, 255, 255, 0.15); border: 2px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%; pointer-events: auto; position: relative;
+            width: 140px; height: 140px; background: rgba(255, 255, 255, 0.15); border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%; pointer-events: auto; position: relative; margin-bottom: 10px; margin-left: 20px;
         }
         #joystick-knob {
-            position: absolute; top: 50%; left: 50%; width: 55px; height: 55px;
+            position: absolute; top: 50%; left: 50%; width: 60px; height: 60px;
             background: rgba(255, 255, 255, 0.8); border-radius: 50%; transform: translate(-50%, -50%);
             box-shadow: 0 4px 8px rgba(0,0,0,0.4); pointer-events: none;
         }
 
-        /* Interaction Button (Shop) */
+        /* Interaction Button (Shop) - Centralizado no rodapé para Paisagem */
         #btn-interact {
-            position: absolute; bottom: 160px; left: 35px; background: #FF9800; color: white;
-            padding: 12px 20px; border-radius: 30px; font-weight: bold; border: 2px solid white;
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); 
+            background: #FF9800; color: white;
+            padding: 15px 30px; border-radius: 30px; font-weight: bold; border: 2px solid white; font-size: 16px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5); pointer-events: auto; cursor: pointer; display: none;
         }
-        #btn-interact:active { transform: scale(0.95); background: #F57C00; }
+        #btn-interact:active { transform: translateX(-50%) scale(0.95); background: #F57C00; }
 
         /* Action Buttons */
-        .action-group { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: auto; }
+        .action-group { display: flex; flex-direction: column; align-items: flex-end; gap: 15px; pointer-events: auto; margin-right: 20px; }
         .btn-circle {
             background: rgba(0, 0, 0, 0.6); border: 2px solid rgba(255,255,255,0.5); border-radius: 50%;
             color: white; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5); cursor: pointer; transition: transform 0.1s;
         }
         .btn-circle:active { transform: scale(0.9); background: rgba(0,0,0,0.8); }
-        #btn-action { width: 90px; height: 90px; font-size: 16px; background: rgba(76, 175, 80, 0.8); }
-        #btn-seed { width: 60px; height: 60px; font-size: 12px; }
-        #btn-eat { width: 60px; height: 60px; font-size: 12px; background: rgba(244, 67, 54, 0.8); display: none; }
+        #btn-action { width: 100px; height: 100px; font-size: 18px; background: rgba(76, 175, 80, 0.8); }
+        #btn-seed { width: 65px; height: 65px; font-size: 12px; }
+        #btn-eat { width: 65px; height: 65px; font-size: 12px; background: rgba(244, 67, 54, 0.8); display: none; }
 
         /* Modals */
         .modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: #fff; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.8);
-            pointer-events: auto; display: none; width: 95%; max-width: 400px; overflow: hidden;
+            pointer-events: auto; display: none; width: 95%; max-width: 500px; overflow: hidden;
             max-height: 90vh; display: none; flex-direction: column;
         }
         .modal.active { display: flex; }
@@ -109,6 +130,11 @@
 </head>
 <body>
 
+    <div id="orientation-warning">
+        <div class="rotate-icon">📱</div>
+        <p>Por favor, vire o celular deitado (Modo Paisagem) para jogar.</p>
+    </div>
+
     <canvas id="gameCanvas"></canvas>
 
     <div id="ui-layer">
@@ -136,7 +162,7 @@
             <div class="action-group">
                 <div class="btn-circle" id="btn-eat">🍗<br><span id="eat-amt">0</span></div>
                 <div class="btn-circle" id="btn-seed">🌱<br><span id="seed-name">Nenhuma</span></div>
-                <div class="btn-circle" id="btn-action">AÇÃO<br>(Espaço)</div>
+                <div class="btn-circle" id="btn-action">AÇÃO</div>
             </div>
         </div>
         <div id="desktop-hint">WASD para mover.<br>Espaço para Arar/Plantar.<br>E para Loja.</div>
@@ -172,10 +198,19 @@
         let db = null; let auth = null; let currentUser = null;
         let appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-        // --- SISTEMA DE ÁUDIO ---
+        // --- SISTEMA DE ÁUDIO E ORIENTAÇÃO ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         
-        // Efeitos Sonoros Sintéticos
+        async function lockOrientation() {
+            try {
+                if (screen.orientation && screen.orientation.lock) {
+                    await screen.orientation.lock('landscape');
+                }
+            } catch (err) {
+                // Navegadores podem bloquear se não estiver em tela cheia, ignoramos silenciosamente.
+            }
+        }
+
         function playSfx(type) {
             if(audioCtx.state === 'suspended') audioCtx.resume();
             const osc = audioCtx.createOscillator();
@@ -197,66 +232,33 @@
             }
         }
 
-        // Sistema de Trilha Sonora BGM com Crossfade
         let bgmStarted = false;
         const AudioManager = {
-            dayTracks: [
-                'Before_the_World_Wakes.mp3', 
-                'Late_Light_Upon_The_Ridge.mp3', 
-                'Screenrecorder-2026-04-26-01-41-44-834.mp3'
-            ],
-            nightTracks: [
-                'Cold_Metal_Breath.mp3', 
-                'Cold_Perimeter.mp3'
-            ],
-            dayAudio: new Audio(),
-            nightAudio: new Audio(),
-            maxVolume: 0.4,
+            dayTracks: ['Before_the_World_Wakes.mp3', 'Late_Light_Upon_The_Ridge.mp3', 'Screenrecorder-2026-04-26-01-41-44-834.mp3'],
+            nightTracks: ['Cold_Metal_Breath.mp3', 'Cold_Perimeter.mp3'],
+            dayAudio: new Audio(), nightAudio: new Audio(), maxVolume: 0.4,
 
             init() {
                 this.dayAudio.src = this.getRandomTrack(this.dayTracks);
                 this.nightAudio.src = this.getRandomTrack(this.nightTracks);
 
-                this.dayAudio.onended = () => {
-                    this.dayAudio.src = this.getRandomTrack(this.dayTracks);
-                    if (this.dayAudio.volume > 0) this.dayAudio.play().catch(()=>{});
-                };
-                this.nightAudio.onended = () => {
-                    this.nightAudio.src = this.getRandomTrack(this.nightTracks);
-                    if (this.nightAudio.volume > 0) this.nightAudio.play().catch(()=>{});
-                };
+                this.dayAudio.onended = () => { this.dayAudio.src = this.getRandomTrack(this.dayTracks); if (this.dayAudio.volume > 0) this.dayAudio.play().catch(()=>{}); };
+                this.nightAudio.onended = () => { this.nightAudio.src = this.getRandomTrack(this.nightTracks); if (this.nightAudio.volume > 0) this.nightAudio.play().catch(()=>{}); };
             },
-
-            getRandomTrack(pool) {
-                return pool[Math.floor(Math.random() * pool.length)];
-            },
-
+            getRandomTrack(pool) { return pool[Math.floor(Math.random() * pool.length)]; },
             updateFade(timeOfDay) {
                 if (!bgmStarted) return;
+                let dayVol = 0, nightVol = 0;
 
-                let dayVol = 0;
-                let nightVol = 0;
+                if (timeOfDay >= 6 && timeOfDay <= 17) dayVol = 1;
+                else if (timeOfDay > 17 && timeOfDay <= 19) { let p = (timeOfDay - 17) / 2; dayVol = 1 - p; nightVol = p; }
+                else if (timeOfDay > 19 || timeOfDay <= 4) nightVol = 1;
+                else if (timeOfDay > 4 && timeOfDay < 6) { let p = (timeOfDay - 4) / 2; nightVol = 1 - p; dayVol = p; }
 
-                if (timeOfDay >= 6 && timeOfDay <= 17) {
-                    dayVol = 1;
-                } else if (timeOfDay > 17 && timeOfDay <= 19) {
-                    let progress = (timeOfDay - 17) / 2;
-                    dayVol = 1 - progress;
-                    nightVol = progress;
-                } else if (timeOfDay > 19 || timeOfDay <= 4) {
-                    nightVol = 1;
-                } else if (timeOfDay > 4 && timeOfDay < 6) {
-                    let progress = (timeOfDay - 4) / 2;
-                    nightVol = 1 - progress;
-                    dayVol = progress;
-                }
-
-                this.dayAudio.volume = dayVol * this.maxVolume;
-                this.nightAudio.volume = nightVol * this.maxVolume;
+                this.dayAudio.volume = dayVol * this.maxVolume; this.nightAudio.volume = nightVol * this.maxVolume;
 
                 if (dayVol > 0 && this.dayAudio.paused) this.dayAudio.play().catch(()=>{});
                 if (dayVol === 0 && !this.dayAudio.paused) this.dayAudio.pause();
-
                 if (nightVol > 0 && this.nightAudio.paused) this.nightAudio.play().catch(()=>{});
                 if (nightVol === 0 && !this.nightAudio.paused) this.nightAudio.pause();
             }
@@ -264,11 +266,11 @@
         AudioManager.init();
 
         document.body.addEventListener('pointerdown', () => {
+            lockOrientation(); // Tenta travar em modo paisagem
             if(!bgmStarted) {
                 bgmStarted = true;
                 if(audioCtx.state === 'suspended') audioCtx.resume();
-                AudioManager.dayAudio.play().then(() => { if (AudioManager.dayAudio.volume === 0) AudioManager.dayAudio.pause(); }).catch(()=>{});
-                AudioManager.nightAudio.play().then(() => { if (AudioManager.nightAudio.volume === 0) AudioManager.nightAudio.pause(); }).catch(()=>{});
+                AudioManager.dayAudio.play().catch(()=>{}); AudioManager.nightAudio.play().catch(()=>{});
             }
         }, { once: true });
 
@@ -314,24 +316,10 @@
             dayCount: 1, nightHandled: false, eventHandled: false, lastTime: 0, regenTimer: 0
         };
 
-        let inventory = {
-            coins: 50,
-            seeds: { wheat: 0, carrot: 0, potato: 0, pumpkin: 0, torch: 0 },
-            crops: { wheat: 0, carrot: 0, potato: 0, pumpkin: 0, torch: 0 },
-            food: { bread: 0, apple: 0 }
-        };
-
-        let player = {
-            x: 800, y: 800, radius: 16, speed: 200,
-            hp: 100, maxHp: 100, energy: 100, maxEnergy: 100,
-            wpnTier: 0, armTier: 0, hoeTier: 0, atkCd: 0, selectedSeedIdx: 0,
-            activeNPC: null
-        };
-
+        let inventory = { coins: 50, seeds: { wheat: 0, carrot: 0, potato: 0, pumpkin: 0, torch: 0 }, crops: { wheat: 0, carrot: 0, potato: 0, pumpkin: 0, torch: 0 }, food: { bread: 0, apple: 0 } };
+        let player = { x: 800, y: 800, radius: 16, speed: 200, hp: 100, maxHp: 100, energy: 100, maxEnergy: 100, wpnTier: 0, armTier: 0, hoeTier: 0, atkCd: 0, selectedSeedIdx: 0, activeNPC: null };
         let farmGrid = new Map();
-        const mapBounds = { width: 2000, height: 2000 };
-        const farmZone = { x: 400, y: 550, w: 600, h: 450 };
-        
+        const mapBounds = { width: 2000, height: 2000 }; const farmZone = { x: 400, y: 550, w: 600, h: 450 };
         let trees = [], npcs = [], enemies = [], golems = [], projectiles = [];
         let input = { x: 0, y: 0 }; let camera = { x: 0, y: 0 };
 
@@ -392,9 +380,8 @@
             document.getElementById('seed-name').innerText = `${cropData[seedKey].name}\n(${inventory.seeds[seedKey]})`;
 
             const btnEat = document.getElementById('btn-eat');
-            if (inventory.food.bread + inventory.food.apple > 0) {
-                btnEat.style.display = 'flex'; document.getElementById('eat-amt').innerText = inventory.food.bread + inventory.food.apple;
-            } else btnEat.style.display = 'none';
+            if (inventory.food.bread + inventory.food.apple > 0) { btnEat.style.display = 'flex'; document.getElementById('eat-amt').innerText = inventory.food.bread + inventory.food.apple; } 
+            else btnEat.style.display = 'none';
 
             const btnInteract = document.getElementById('btn-interact');
             if (player.activeNPC) {
@@ -410,11 +397,7 @@
 
         // --- CONTROLES ---
         const keys = {};
-        window.addEventListener('keydown', e => { 
-            keys[e.key.toLowerCase()] = true; 
-            if(e.code === 'Space') window.doAction(); 
-            if(e.code === 'KeyE' && player.activeNPC && !state.isPaused) window.openShop(player.activeNPC);
-        });
+        window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(e.code === 'Space') window.doAction(); if(e.code === 'KeyE' && player.activeNPC && !state.isPaused) window.openShop(player.activeNPC); });
         window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
         const joystickZone = document.getElementById('joystick-zone'); const joystickKnob = document.getElementById('joystick-knob');
@@ -424,9 +407,9 @@
             e.preventDefault(); if (state.isPaused || !state.isRunning) return;
             const touch = e.targetTouches[0] || e.changedTouches[0]; const rect = joystickZone.getBoundingClientRect();
             const dx = touch.clientX - (rect.left + rect.width/2), dy = touch.clientY - (rect.top + rect.height/2);
-            const dist = Math.hypot(dx, dy); const nx = dist > 40 ? (dx/dist)*40 : dx; const ny = dist > 40 ? (dy/dist)*40 : dy;
+            const dist = Math.hypot(dx, dy); const nx = dist > 45 ? (dx/dist)*45 : dx; const ny = dist > 45 ? (dy/dist)*45 : dy;
             joystickKnob.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
-            input.x = nx / 40; input.y = ny / 40;
+            input.x = nx / 45; input.y = ny / 45;
         }
         function resetJoystick(e) { e.preventDefault(); joystickActive = false; joystickKnob.style.transform = `translate(-50%, -50%)`; input.x = 0; input.y = 0; }
         joystickZone.addEventListener('touchstart', e => { joystickActive = true; handleJoystick(e); }, {passive: false});
@@ -458,19 +441,15 @@
                 } else if (tile.state === 'plowed') {
                     const seedKey = cropKeys[player.selectedSeedIdx];
                     if (inventory.seeds[seedKey] > 0) {
-                        if (player.energy >= 10) {
-                            player.energy -= 10; inventory.seeds[seedKey]--; tile.state = 'growing'; tile.type = seedKey; tile.timer = 0;
-                            playSfx('plow'); updateHUD();
-                        } else showAlert('faint-alert', 'Sem energia para plantar!', 1500);
+                        if (player.energy >= 10) { player.energy -= 10; inventory.seeds[seedKey]--; tile.state = 'growing'; tile.type = seedKey; tile.timer = 0; playSfx('plow'); updateHUD(); } 
+                        else showAlert('faint-alert', 'Sem energia para plantar!', 1500);
                     } else showAlert('save-alert', 'Sem sementes desse tipo!', 1500);
                 }
             } else if (inZone) {
                 if (player.hoeTier > 0) {
                     const hoeCost = hoes[player.hoeTier].energy;
-                    if (player.energy >= hoeCost) {
-                        player.energy -= hoeCost; farmGrid.set(key, { state: 'plowed' });
-                        playSfx('plow'); updateHUD();
-                    } else showAlert('faint-alert', 'Sem energia para arar!', 1500);
+                    if (player.energy >= hoeCost) { player.energy -= hoeCost; farmGrid.set(key, { state: 'plowed' }); playSfx('plow'); updateHUD(); } 
+                    else showAlert('faint-alert', 'Sem energia para arar!', 1500);
                 } else showAlert('save-alert', 'Compre uma enxada primeiro!', 2000);
             } else showAlert('save-alert', 'Arar apenas na zona de terra escura!', 1500);
 
@@ -573,10 +552,7 @@
             } else if(typeStr === 'pillager') {
                 if(state.dayCount <= 1) return;
                 showAlert('event-warning', '⚠️ INVASÃO PILLAGER!', 4000);
-                for(let i=0; i<3; i++) {
-                    let p = randEdge();
-                    enemies.push({ x: p.x, y: p.y, type: "pillager", radius: 15, speed: 160, hp: 150 + (state.dayCount*20), maxHp: 150 + (state.dayCount*20), dmg: 30, cd: 0 });
-                }
+                for(let i=0; i<3; i++) { let p = randEdge(); enemies.push({ x: p.x, y: p.y, type: "pillager", radius: 15, speed: 160, hp: 150 + (state.dayCount*20), maxHp: 150 + (state.dayCount*20), dmg: 30, cd: 0 }); }
             }
         }
 
@@ -592,10 +568,7 @@
             if (state.timeOfDay >= 19 && !state.nightHandled) { spawnEnemies('night'); state.nightHandled = true; }
             else if (state.timeOfDay >= 6 && state.timeOfDay < 19) {
                 enemies.forEach(e => { if(e && e.type !== "pillager") e.hp -= 50 * dt; });
-                if (state.timeOfDay >= 12 && !state.eventHandled && state.dayCount > 1) { 
-                    state.eventHandled = true; 
-                    if (Math.random() < 0.3) spawnEnemies('pillager'); 
-                }
+                if (state.timeOfDay >= 12 && !state.eventHandled && state.dayCount > 1) { state.eventHandled = true; if (Math.random() < 0.3) spawnEnemies('pillager'); }
             }
 
             let dirX = input.x, dirY = input.y;
@@ -607,9 +580,7 @@
 
             if (dirX === 0 && dirY === 0) {
                 state.regenTimer += dt;
-                if (state.regenTimer > 0.5 && player.energy < player.maxEnergy) {
-                    player.energy = Math.min(player.maxEnergy, player.energy + 15 * dt);
-                }
+                if (state.regenTimer > 0.5 && player.energy < player.maxEnergy) { player.energy = Math.min(player.maxEnergy, player.energy + 15 * dt); }
             } else state.regenTimer = 0;
 
             player.x = Math.max(player.radius, Math.min(mapBounds.width - player.radius, player.x + dirX * player.speed * dt));
@@ -618,9 +589,7 @@
             farmGrid.forEach(tile => { if (tile.state === 'growing') { tile.timer += dt; if (tile.timer >= cropData[tile.type].time) tile.state = 'ready'; } });
 
             let foundNPC = null;
-            for (let npc of npcs) {
-                if (getDist(player, {x: npc.x+npc.w/2, y: npc.y+npc.h/2}) < npc.radius) { foundNPC = npc.id; break; }
-            }
+            for (let npc of npcs) { if (getDist(player, {x: npc.x+npc.w/2, y: npc.y+npc.h/2}) < npc.radius) { foundNPC = npc.id; break; } }
             if(player.activeNPC !== foundNPC) { player.activeNPC = foundNPC; updateHUD(); }
 
             const wpn = weapons[player.wpnTier];
@@ -633,8 +602,7 @@
             }
 
             for (let i = enemies.length - 1; i >= 0; i--) {
-                let e = enemies[i];
-                if (!e) continue;
+                let e = enemies[i]; if (!e) continue;
                 if (e.hp <= 0) { if (e.type === "pillager") inventory.coins += 25; enemies.splice(i, 1); updateHUD(); continue; }
                 
                 let target = player; let minDist = getDist(e, player);
@@ -649,10 +617,7 @@
                 } else {
                     if (minDist > 25) { let a = Math.atan2(target.y - e.y, target.x - e.x); e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; }
                     if (minDist < 35 && e.cd <= 0) {
-                        if (target === player) { 
-                            player.hp -= e.dmg * (1 - armors[player.armTier].red); updateHUD(); 
-                            if (player.hp <= 0) { faint("killed"); return; } 
-                        } 
+                        if (target === player) { player.hp -= e.dmg * (1 - armors[player.armTier].red); updateHUD(); if (player.hp <= 0) { faint("killed"); return; } } 
                         else target.hp -= e.dmg;
                         e.cd = 1.0;
                     }
@@ -660,7 +625,7 @@
             }
 
             for (let i = projectiles.length - 1; i >= 0; i--) {
-                let p = projectiles[i];
+                let p = projectiles[i]; 
                 if (!p) continue;
                 p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
                 if (p.life <= 0) { projectiles.splice(i, 1); continue; }
