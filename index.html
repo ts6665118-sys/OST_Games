@@ -8,15 +8,35 @@
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; 
-            background-color: #55aa55; font-family: 'Segoe UI', Tahoma, sans-serif; 
+            background-color: #1a1a1a; font-family: 'Segoe UI', Tahoma, sans-serif; 
             touch-action: none; 
             overscroll-behavior-y: contain; 
         }
         #gameCanvas { display: block; width: 100%; height: 100%; }
 
+        /* TELAS DE SOBREPOSIÇÃO (MENU E LOADING) */
+        .fullscreen-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10000; display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; text-align: center; background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
+        }
+        #main-menu h1 { font-size: 36px; text-shadow: 2px 2px 5px rgba(0,0,0,0.7); margin-bottom: 30px; }
+        .menu-btn {
+            background: rgba(0,0,0,0.6); color: white; border: 2px solid #81c784; padding: 15px 40px;
+            font-size: 20px; font-weight: bold; border-radius: 8px; margin: 10px; cursor: pointer;
+            transition: all 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.5); width: 250px;
+        }
+        .menu-btn:active { transform: scale(0.95); background: #81c784; color: black; }
+
+        #loading-screen { background: #111; z-index: 10001; display: none; }
+        #loading-text { font-size: 24px; margin-bottom: 20px; font-style: italic; color: #aed581; }
+        .progress-bar { width: 300px; height: 15px; background: #333; border-radius: 10px; overflow: hidden; border: 2px solid #555; }
+        .progress-fill { height: 100%; width: 0%; background: #64dd17; transition: width 0.3s ease; }
+
+        /* AVISO DE ROTAÇÃO */
         #orientation-warning {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: #111; color: #fff; z-index: 9999;
+            background: #111; color: #fff; z-index: 10005;
             flex-direction: column; justify-content: center; align-items: center;
             text-align: center; font-size: 22px; font-weight: bold; padding: 20px;
         }
@@ -56,11 +76,23 @@
         #save-alert { background: rgba(33, 150, 243, 0.9); border-color: #0d47a1; }
         #faint-alert { background: rgba(156, 39, 176, 0.9); border-color: #4a148c; }
 
-        .controls-area { display: flex; justify-content: space-between; padding: 20px; align-items: flex-end; position: relative; height: 100%; padding-bottom: 30px;}
+        .controls-area { display: flex; justify-content: space-between; padding: 20px; align-items: flex-end; position: relative; height: 100%; padding-bottom: 20px;}
         
+        .joystick-container { display: flex; flex-direction: column; align-items: flex-start; pointer-events: auto; }
+        
+        /* NOVO: HOTBAR ACIMA DO JOYSTICK */
+        .hotbar {
+            display: flex; gap: 5px; margin-bottom: 15px; margin-left: 10px;
+            background: rgba(0,0,0,0.5); padding: 5px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.2);
+        }
+        .hotbar-slot {
+            width: 35px; height: 35px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 5px; display: flex; justify-content: center; align-items: center; font-size: 18px;
+        }
+
         #joystick-zone {
             width: 140px; height: 140px; background: rgba(255, 255, 255, 0.15); border: 2px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%; pointer-events: auto; position: relative; margin-bottom: 10px; margin-left: 20px;
+            border-radius: 50%; position: relative; margin-left: 20px;
         }
         #joystick-knob {
             position: absolute; top: 50%; left: 50%; width: 60px; height: 60px;
@@ -76,22 +108,25 @@
         }
         #btn-interact:active { transform: translateX(-50%) scale(0.95); background: #F57C00; }
 
-        .action-group { display: flex; flex-direction: column; align-items: flex-end; gap: 15px; pointer-events: auto; margin-right: 20px; }
+        /* CORREÇÃO DE PROPORÇÃO DA TELA PARA BOTÕES DE AÇÃO */
+        .action-container { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; pointer-events: auto; }
+        .action-row-top { display: flex; gap: 10px; margin-right: 15px; }
         .btn-circle {
             background: rgba(0, 0, 0, 0.6); border: 2px solid rgba(255,255,255,0.5); border-radius: 50%;
             color: white; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5); cursor: pointer; transition: transform 0.1s;
         }
         .btn-circle:active { transform: scale(0.9); background: rgba(0,0,0,0.8); }
+        
         #btn-action { width: 100px; height: 100px; font-size: 18px; background: rgba(76, 175, 80, 0.8); }
-        #btn-seed { width: 65px; height: 65px; font-size: 12px; }
-        #btn-eat { width: 65px; height: 65px; font-size: 12px; background: rgba(244, 67, 54, 0.8); display: none; }
+        #btn-seed, #btn-eat { width: 60px; height: 60px; font-size: 11px; }
+        #btn-eat { background: rgba(244, 67, 54, 0.8); display: none; }
 
         .modal {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: #fff; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.8);
             pointer-events: auto; display: none; width: 95%; max-width: 500px; overflow: hidden;
-            max-height: 90vh; display: none; flex-direction: column;
+            max-height: 90vh; display: none; flex-direction: column; z-index: 9999;
         }
         .modal.active { display: flex; }
         .modal-header { background: #333; color: white; padding: 15px; text-align: center; }
@@ -116,7 +151,7 @@
         .shop-desc { font-size: 11px; color: #666; }
         .shop-btn { padding: 8px 15px; border-radius: 4px; border: none; font-weight: bold; cursor: pointer; display:flex; align-items:center; gap:5px; }
 
-        #desktop-hint { position: absolute; bottom: 120px; right: 20px; color: rgba(255,255,255,0.7); font-size: 14px; text-align: right; pointer-events: none;}
+        #desktop-hint { position: absolute; bottom: 140px; right: 20px; color: rgba(255,255,255,0.7); font-size: 14px; text-align: right; pointer-events: none;}
         @media (max-width: 768px) { #desktop-hint { display: none; } }
         
         .emerald-icon { vertical-align: text-bottom; filter: drop-shadow(0px 1px 1px rgba(0,0,0,0.5)); }
@@ -129,10 +164,20 @@
         <p>Por favor, vire o celular deitado (Modo Paisagem) para jogar.</p>
     </div>
 
+    <div id="main-menu" class="fullscreen-overlay">
+        <h1>Sobrevivência Musical</h1>
+        <button class="menu-btn" id="btn-new-game">Novo Jogo</button>
+        <button class="menu-btn" id="btn-load-game">Carregar Jogo</button>
+    </div>
+
+    <div id="loading-screen" class="fullscreen-overlay">
+        <h2 id="loading-text">Carregando Mundo...</h2>
+        <div class="progress-bar"><div class="progress-fill" id="load-fill"></div></div>
+    </div>
+
     <canvas id="gameCanvas"></canvas>
 
-    <div id="ui-layer">
-        <div class="hud-top">
+    <div id="ui-layer" style="display: none;"> <div class="hud-top">
             <div class="status-container">
                 <div class="bar-wrap"><div class="bar-fill" id="hp-fill"></div><div class="bar-text" id="hp-txt">HP 100/100</div></div>
                 <div class="bar-wrap"><div class="bar-fill" id="en-fill"></div><div class="bar-text" id="en-txt">EN 100/100</div></div>
@@ -151,11 +196,23 @@
         </div>
 
         <div class="controls-area">
-            <div id="joystick-zone"><div id="joystick-knob"></div></div>
+            <div class="joystick-container">
+                <div class="hotbar">
+                    <div class="hotbar-slot"></div>
+                    <div class="hotbar-slot"></div>
+                    <div class="hotbar-slot"></div>
+                    <div class="hotbar-slot"></div>
+                </div>
+                <div id="joystick-zone"><div id="joystick-knob"></div></div>
+            </div>
+            
             <div id="btn-interact">🛍️ Abrir Loja</div>
-            <div class="action-group">
-                <div class="btn-circle" id="btn-eat">🍗<br><span id="eat-amt">0</span></div>
-                <div class="btn-circle" id="btn-seed">🌱<br><span id="seed-name">Nenhuma</span></div>
+            
+            <div class="action-container">
+                <div class="action-row-top">
+                    <div class="btn-circle" id="btn-eat">🍗<br><span id="eat-amt">0</span></div>
+                    <div class="btn-circle" id="btn-seed">🌱<br><span id="seed-name">Nenhuma</span></div>
+                </div>
                 <div class="btn-circle" id="btn-action">AÇÃO</div>
             </div>
         </div>
@@ -266,12 +323,6 @@
         };
         AudioManager.init();
 
-        document.body.addEventListener('pointerdown', () => {
-            lockOrientation();
-            if(!bgmStarted) { bgmStarted = true; if(audioCtx.state === 'suspended') audioCtx.resume(); AudioManager.dayAudio.play().catch(()=>{}); AudioManager.nightAudio.play().catch(()=>{}); }
-        }, { once: true });
-
-
         // --- DADOS DO JOGO ---
         const TILE_SIZE = 40;
         const cropData = {
@@ -289,8 +340,9 @@
         const foods = { bread: { name: 'Pão', hp: 40, cost: 25 }, apple: { name: 'Maçã Dourada', hp: 100, cost: 100 } };
 
         let state = {
-            isRunning: true, isPaused: false, 
-            timeOfDay: 8, timeScale: 0.05, // TEMPO MAIS LENTO (Era 0.15, agora é 0.05)
+            isRunning: false, // Jogo começa pausado no Menu
+            isPaused: false, 
+            timeOfDay: 8, timeScale: 0.05,
             dayCount: 1, nightHandled: false, eventHandled: false, lastTime: 0, regenTimer: 0, hudTimer: 0, saveTimer: 0
         };
 
@@ -301,6 +353,59 @@
         let trees = [], npcs = [], enemies = [], golems = [], projectiles = [];
         let input = { x: 0, y: 0 }; let camera = { x: 0, y: 0 };
 
+        // --- SISTEMA DE MENUS E CARREGAMENTO ---
+        document.getElementById('btn-new-game').addEventListener('click', () => {
+            lockOrientation();
+            // Reseta Dados para Novo Jogo
+            try { localStorage.removeItem('music_survival_save'); } catch(e){}
+            resetGameState();
+            startLoadingSequence();
+        });
+
+        document.getElementById('btn-load-game').addEventListener('click', () => {
+            lockOrientation();
+            startLoadingSequence();
+        });
+
+        function resetGameState() {
+            state = { isRunning: false, isPaused: false, timeOfDay: 8, timeScale: 0.05, dayCount: 1, nightHandled: false, eventHandled: false, lastTime: 0, regenTimer: 0, hudTimer: 0, saveTimer: 0 };
+            inventory = { coins: 50, seeds: { wheat: 0, carrot: 0, potato: 0, pumpkin: 0, torch: 0 }, crops: { wheat: 0, carrot: 0, potato: 0, pumpkin: 0, torch: 0 }, food: { bread: 0, apple: 0 } };
+            player = { x: 800, y: 800, radius: 16, speed: 200, hp: 100, maxHp: 100, energy: 100, maxEnergy: 100, wpnTier: 0, armTier: 0, hoeTier: 0, atkCd: 0, selectedSeedIdx: 0, activeNPC: null, lastDirX: 1, lastDirY: 0 };
+            farmGrid.clear();
+            enemies = []; golems = []; projectiles = [];
+        }
+
+        function startLoadingSequence() {
+            document.getElementById('main-menu').style.display = 'none';
+            document.getElementById('loading-screen').style.display = 'flex';
+            
+            const textEl = document.getElementById('loading-text');
+            const fillEl = document.getElementById('load-fill');
+
+            // Cronologia Visual de Carregamento
+            setTimeout(() => { textEl.innerText = "Preparando Terreno..."; fillEl.style.width = "25%"; }, 500);
+            setTimeout(() => { textEl.innerText = "Plantando Árvores e Colheitas..."; fillEl.style.width = "50%"; }, 1500);
+            setTimeout(() => { textEl.innerText = "Sincronizando Dados..."; fillEl.style.width = "80%"; }, 2500);
+            setTimeout(() => { 
+                textEl.innerText = "Tudo Pronto!"; fillEl.style.width = "100%"; 
+            }, 3200);
+
+            // Fim do Carregamento
+            setTimeout(() => {
+                document.getElementById('loading-screen').style.display = 'none';
+                document.getElementById('ui-layer').style.display = 'flex';
+                
+                loadGame(); // Tenta carregar (se foi "Novo Jogo" não vai ter o que carregar pois apagamos)
+                state.isRunning = true;
+                
+                if(!bgmStarted) {
+                    bgmStarted = true;
+                    if(audioCtx.state === 'suspended') audioCtx.resume(); 
+                    AudioManager.dayAudio.play().catch(()=>{}); AudioManager.nightAudio.play().catch(()=>{}); 
+                }
+            }, 3800);
+        }
+
         // --- SISTEMA DE SALVAMENTO HÍBRIDO (LOCAL + CLOUD) ---
         async function initFirebase() {
             try {
@@ -310,19 +415,18 @@
                     auth = getAuth(app); db = getFirestore(app);
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
                     else await signInAnonymously(auth);
-                    onAuthStateChanged(auth, user => { currentUser = user; loadGame(); });
-                } else loadGame(); // Tenta carregar local se não tiver firebase
-            } catch (e) { loadGame(); }
+                    onAuthStateChanged(auth, user => { currentUser = user; });
+                }
+            } catch (e) { console.log("Firebase desativado."); }
         }
 
         async function saveGame() {
+            if(!state.isRunning) return;
             const gridArray = Array.from(farmGrid.entries());
             const data = { state: { timeOfDay: state.timeOfDay, dayCount: state.dayCount }, inventory, player, farmGrid: gridArray };
             
-            // Salva Localmente (Garantia)
             try { localStorage.setItem('music_survival_save', JSON.stringify(data)); } catch(e){}
 
-            // Salva na Nuvem se possível
             if (currentUser && db) {
                 try {
                     const gridObj = {}; farmGrid.forEach((val, key) => gridObj[key] = val);
@@ -344,14 +448,16 @@
             if (!loaded) {
                 try {
                     const localData = localStorage.getItem('music_survival_save');
-                    if (localData) applySaveData(JSON.parse(localData), false);
+                    if (localData) { applySaveData(JSON.parse(localData), false); loaded = true; }
                 } catch(e) {}
             }
+            
+            if(loaded) showAlert('save-alert', '💾 Jogo Carregado');
             updateHUD(); updateShopUI();
         }
 
         function applySaveData(data, isCloud) {
-            state.timeOfDay = data.state.timeOfDay; state.dayCount = data.state.dayCount;
+            state.timeOfDay = data.state.timeOfDay || 8; state.dayCount = data.state.dayCount || 1;
             inventory = data.inventory; player = { ...player, ...data.player };
             farmGrid.clear();
             if (isCloud && data.farmGrid) {
@@ -563,22 +669,16 @@
         function update(dt) {
             if (!state.isRunning || state.isPaused) return;
 
-            // Passagem de Tempo
             state.timeOfDay += dt * state.timeScale;
             if (state.timeOfDay >= 24) { state.timeOfDay -= 24; state.dayCount++; state.nightHandled = false; state.eventHandled = false; saveGame(); }
             
-            // Auto-Save Periodico (30 seg)
             state.saveTimer += dt;
             if (state.saveTimer >= 30) { saveGame(); state.saveTimer = 0; }
 
-            // Atualização HUD Periódica (Relógio)
             state.hudTimer += dt;
             if (state.hudTimer >= 0.5) { updateHUD(); state.hudTimer = 0; }
 
-            // Regeneração de Vida Lenta (+0.5 por segundo)
-            if (player.hp > 0 && player.hp < player.maxHp) {
-                player.hp = Math.min(player.maxHp, player.hp + 0.5 * dt);
-            }
+            if (player.hp > 0 && player.hp < player.maxHp) player.hp = Math.min(player.maxHp, player.hp + 0.5 * dt);
 
             AudioManager.updateFade(state.timeOfDay);
 
@@ -595,7 +695,6 @@
                 if (dirX !== 0 && dirY !== 0) { const l = Math.hypot(dirX, dirY); dirX/=l; dirY/=l; }
             }
 
-            // Memoriza a última direção para a arma
             if (dirX !== 0 || dirY !== 0) { player.lastDirX = dirX; player.lastDirY = dirY; }
 
             if (dirX === 0 && dirY === 0) {
@@ -711,10 +810,7 @@
             if (wpn.dmg > 0) {
                 ctx.strokeStyle = wpn.color; ctx.lineWidth = player.wpnTier === 4 ? 6 : 4;
                 ctx.beginPath(); ctx.moveTo(player.x, player.y);
-                
-                // Direção da Arma baseada no último movimento
                 let angle = Math.atan2(player.lastDirY, player.lastDirX);
-                
                 if (enemies.length > 0) {
                     let c = enemies.reduce((acc, e) => { let d = getDist(player, e); return d < acc.d ? {e, d} : acc; }, {e: null, d: Infinity});
                     if (c.d < 150) angle = Math.atan2(c.e.y - player.y, c.e.x - player.x);
@@ -741,7 +837,7 @@
                 ctx.beginPath(); ctx.arc(t.x, t.y, t.radius, 0, Math.PI*2); ctx.fillStyle = '#1b5e20'; ctx.fill();
             }
             
-            if(!state.isPaused) {
+            if(!state.isPaused && state.isRunning) {
                 const tx = Math.floor(player.x / TILE_SIZE); const ty = Math.floor(player.y / TILE_SIZE);
                 ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2;
                 ctx.strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
@@ -762,7 +858,7 @@
 
         window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-        initWorld(); initFirebase(); updateHUD();
+        initWorld(); initFirebase();
         requestAnimationFrame(t => { state.lastTime = t; gameLoop(t); });
     </script>
 </body>
