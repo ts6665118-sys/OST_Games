@@ -1,0 +1,1719 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Raspa Relíquias</title>
+<style>
+  html,body{
+    height:100%; margin:0; padding:0;
+    background:#0b0913; overflow:hidden;
+    -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent;
+    -webkit-touch-callout:none;
+  }
+  canvas#tela{
+    position:fixed; inset:0; width:100%; height:100%;
+    background:#0b0913;
+    image-rendering:pixelated;
+    image-rendering:crisp-edges;
+    touch-action:none;
+    cursor:none;
+    display:block;
+  }
+  #dbgBtn{
+    position:fixed; right:6px; bottom:6px; z-index:60;
+    font:10px monospace; color:#9fffb0; background:#10241a;
+    border:2px solid #3f8f5f; padding:4px 7px;
+  }
+  #dbg{
+    position:fixed; left:0; right:0; bottom:0; z-index:50;
+    max-height:46%;
+    background:rgba(4,10,6,0.94);
+    border-top:2px solid #3f8f5f;
+    color:#b8ffb8; font:10px/1.35 monospace;
+    padding:6px 8px calc(6px + env(safe-area-inset-bottom));
+    display:flex; flex-direction:column; gap:4px;
+  }
+  #dbg[hidden]{ display:none; }
+  #dbg .bar{ display:flex; gap:6px; }
+  #dbg button{
+    font:10px monospace; color:#eaffea; background:#173a26;
+    border:2px solid #3f8f5f; padding:3px 8px; cursor:pointer;
+  }
+  #dbgStats{ white-space:pre-wrap; color:#8fd8ff; }
+  #dbgLog{
+    white-space:pre-wrap; overflow-y:auto; flex:1;
+    margin:0; color:#b8ffb8;
+  }
+  #dbgLog .w{ color:#ffd75e; }
+  #dbgLog .e{ color:#ff7b7b; }
+</style>
+</head>
+<body>
+<canvas id="tela"></canvas>
+
+<button id="dbgBtn" aria-label="Depuracao">DBG</button>
+<div id="dbg" hidden>
+  <div class="bar">
+    <button id="dbgClear">LIMPAR</button>
+    <button id="dbgHide">OCULTAR</button>
+  </div>
+  <div id="dbgStats"></div>
+  <pre id="dbgLog"></pre>
+</div>
+<noscript>Este jogo requer JavaScript ativado.</noscript>
+
+<script>
+'use strict';
+/* =====================================================================
+   RASPA REL\u00CDQUIAS — FASES 1-5
+   Fase 5: livro de cole\u00e7\u00e3o, selos (conquistas), eventos especiais.
+   \u00c1udio: trilha do menu via arquivo externo; SFX sintetizados.
+   ===================================================================== */
+
+/* ---------------- \u00c1UDIO ---------------- */
+/* Trilha do menu: "Scratch, Scratch, Scratch....mp3" (reposit\u00f3rio GitHub).
+   Coloque o arquivo em PASTA_AUDIO ou aponte para a URL raw do reposit\u00f3rio.
+   A trilha de gameplay (TRILHAS.jogo) ser\u00e1 definida na pr\u00f3xima mensagem. */
+const PASTA_AUDIO = 'audio/';
+const TRILHAS = {
+  menu: 'Scratch, Scratch, Scratch....mp3',
+  jogo: null
+};
+
+const AudioManager = {
+  bgmAtual: null, el: null, falhas: {},
+  tocarBGM: function(faixa){
+    const arq = TRILHAS[faixa];
+    if (!arq){ this.pararBGM(); return; }
+    if (this.bgmAtual === faixa && this.el && !this.el.paused) return;
+    this.pararBGM();
+    if (this.falhas[arq]) return;
+    try {
+      const el = new Audio(PASTA_AUDIO + arq);
+      el.loop = true; el.volume = 0.5;
+      const self = this;
+      el.addEventListener('error', function(){ self.falhas[arq] = true; if (self.el===el){ self.el=null; self.bgmAtual=null; } }, {once:true});
+      const p = el.play(); if (p && p.catch) p.catch(function(){});
+      this.el = el; this.bgmAtual = faixa;
+    } catch(e){ this.falhas[arq] = true; }
+  },
+  pararBGM: function(){ if (this.el){ try{ this.el.pause(); }catch(e){} this.el = null; } this.bgmAtual = null; }
+};
+function playBGM(track){ AudioManager.tocarBGM(track); }
+function stopBGM(){ AudioManager.pararBGM(); }
+function playSFX(name){ AudioSynth.tocar(name); }
+function playUIAudio(name){ AudioSynth.tocar(name==='click' ? 'ui' : name); }
+
+/* SFX sintetizados (sem trilha sonora) */
+const AudioSynth = {
+  ctx: null, noiseBuf: null, ultimo: {},
+  garantir: function(){
+    if (!this.ctx){
+      try { this.ctx = new (window.AudioContext||window.webkitAudioContext)(); } catch(e){ this.ctx = null; }
+    }
+    if (this.ctx && this.ctx.state === 'suspended'){ const p = this.ctx.resume(); if (p && p.catch) p.catch(function(){}); }
+    return this.ctx;
+  },
+  nota: function(f0, f1, dur, tipo, vol, atraso){
+    const c = this.ctx; const t = c.currentTime + (atraso||0);
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = tipo||'square';
+    o.frequency.setValueAtTime(f0, t);
+    if (f1) o.frequency.exponentialRampToValueAtTime(f1, t+dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+    o.connect(g); g.connect(c.destination);
+    o.start(t); o.stop(t+dur+0.02);
+  },
+  ruido: function(dur, vol, freq, atraso){
+    const c = this.ctx;
+    if (!this.noiseBuf){
+      const len = Math.floor(c.sampleRate*0.3);
+      this.noiseBuf = c.createBuffer(1, len, c.sampleRate);
+      const d = this.noiseBuf.getChannelData(0);
+      for (let i=0;i<len;i++) d[i] = Math.random()*2-1;
+    }
+    const t = c.currentTime + (atraso||0);
+    const s = c.createBufferSource(); s.buffer = this.noiseBuf;
+    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 0.8;
+    const g = c.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+    s.connect(f); f.connect(g); g.connect(c.destination);
+    s.start(t); s.stop(t+dur+0.02);
+  },
+  tocar: function(nome){
+    if (!GameState.config.som) return;
+    if (!this.garantir()) return;
+    const agora = Date.now();
+    if (nome === 'scratch'){
+      if (this.ultimo.scratch && agora-this.ultimo.scratch < 90) return;
+      this.ultimo.scratch = agora;
+      this.ruido(0.09, 0.18, 900+Math.random()*900);
+      return;
+    }
+    if (nome === 'robot'){
+      if (this.ultimo.robot && agora-this.ultimo.robot < 450) return;
+      this.ultimo.robot = agora;
+      this.nota(90, 60, 0.12, 'sawtooth', 0.12);
+      this.ruido(0.06, 0.06, 300);
+      return;
+    }
+    switch(nome){
+      case 'ui': this.nota(700, 900, 0.05, 'square', 0.08); break;
+      case 'card': this.ruido(0.12, 0.12, 500); break;
+      case 'ready': this.nota(880, 0, 0.07, 'triangle', 0.12); this.nota(1175, 0, 0.09, 'triangle', 0.12, 0.08); break;
+      case 'collect': this.nota(987, 0, 0.06, 'square', 0.1); this.nota(1319, 0, 0.12, 'square', 0.1, 0.06); break;
+      case 'buy': this.nota(523, 0, 0.07, 'square', 0.1); this.nota(784, 0, 0.1, 'square', 0.1, 0.07); break;
+      case 'perfect': [523,659,784,1046].forEach(function(f,i){ AudioSynth.nota(f,0,0.09,'triangle',0.12,i*0.06); }); break;
+      case 'combo': this.nota(392, 523, 0.09, 'sawtooth', 0.12); this.nota(523, 659, 0.12, 'sawtooth', 0.12, 0.09); break;
+      case 'rare': this.nota(330, 494, 0.2, 'sine', 0.14); this.nota(660, 0, 0.15, 'sine', 0.1, 0.15); break;
+      case 'tier': [392,494,587,784].forEach(function(f,i){ AudioSynth.nota(f,0,0.1,'square',0.1,i*0.08); }); break;
+    }
+  }
+};
+
+/* ---------------- Constantes ---------------- */
+const W = 160;
+let HH = 144;
+const CARD = { x: 30, y: 22, w: 100, h: 70 };
+const LIMIAR_PERFEITO = 0.95;
+const CHAVE_SAVE = 'raspaReliquias.save.v5';
+
+const PAL = {
+  fundo:'#141024', painel:'#241b3a', painelEsc:'#181228',
+  madeira0:'#7a4a21', madeira1:'#5d3517', madeira2:'#8f5a2b',
+  folha0:'#9aa7b8', folha1:'#7c8899', folha2:'#c9d4de',
+  carta0:'#1d4a80', carta1:'#2e6db4', moldura:'#41c7d8',
+  ouro:'#f7c948', gema:'#3ee08f', texto:'#f4f4f4',
+  escuro:'#0c0a14', alerta:'#ff5d73', ciano:'#41c7d8',
+  reliquia:'#b06ae0', antiga:'#c9834a', cinza:'#9a94b8'
+};
+
+function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function rnd(){ return Math.random(); }
+function rndi(a,b){ return a + Math.floor(Math.random()*(b-a+1)); }
+function protegido(fn){
+  return function(){ try { return fn.apply(this, arguments); } catch(e){ DebugManager.erro(e.message); } };
+}
+function mkCanvas(w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h; return c; }
+
+const SUF = ['K','M','B','T','Qa','Qi'];
+function fmt(n){
+  n = Math.floor(n);
+  if (n < 1000) return String(n);
+  let i = -1, v = n;
+  while (v >= 1000 && i < SUF.length-1){ v /= 1000; i++; }
+  const s = v >= 100 ? Math.floor(v) : Math.floor(v*10)/10;
+  return String(s).replace('.',',') + SUF[i];
+}
+function fmtTempo(seg){
+  seg = Math.floor(seg);
+  const h = Math.floor(seg/3600), m = Math.floor((seg%3600)/60), s = seg%60;
+  if (h > 0) return h+'H '+('0'+m).slice(-2)+'MIN';
+  if (m > 0) return m+'MIN '+('0'+s).slice(-2)+'S';
+  return s+'S';
+}
+function fmtData(t){
+  const d = new Date(t);
+  return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2);
+}
+
+/* ---------------- Fonte pixel ---------------- */
+const G5 = {
+  A:'010,101,111,101,101', B:'110,101,110,101,110', C:'011,100,100,100,011',
+  D:'110,101,101,101,110', E:'111,100,110,100,111', F:'111,100,110,100,100',
+  G:'011,100,101,101,011', H:'101,101,111,101,101', I:'111,010,010,010,111',
+  J:'001,001,001,101,010', K:'101,101,110,101,101', L:'100,100,100,100,111',
+  M:'101,111,101,101,101', N:'110,101,101,101,101', O:'010,101,101,101,010',
+  P:'110,101,110,100,100', Q:'010,101,101,010,001', R:'110,101,110,101,101',
+  S:'011,100,010,001,110', T:'111,010,010,010,010', U:'101,101,101,101,111',
+  V:'101,101,101,101,010', X:'101,101,010,101,101', Y:'101,101,010,010,010',
+  Z:'111,001,010,100,111',
+  '0':'111,101,101,101,111', '1':'010,110,010,010,111', '2':'110,001,010,100,111',
+  '3':'110,001,010,001,110', '4':'101,101,111,001,001', '5':'111,100,110,001,110',
+  '6':'011,100,110,101,110', '7':'111,001,001,010,010', '8':'111,101,111,101,111',
+  '9':'010,101,111,001,110',
+  ' ':'000,000,000,000,000', '.':'000,000,000,000,010', ',':'000,000,000,010,100',
+  ':':'000,010,000,010,000', '!':'010,010,010,000,010', '?':'110,001,010,000,010',
+  '%':'101,001,010,100,101', '+':'000,010,111,010,000', '-':'000,000,111,000,000',
+  '=':'000,111,000,111,000', '/':'001,001,010,100,100', '(':'010,100,100,100,010',
+  ')':'010,001,001,001,010', '>':'100,010,001,010,100', '<':'001,010,100,010,001',
+  '#':'101,111,101,111,101'
+};
+const FONT = {};
+for (const k in G5) FONT[k] = ['000'].concat(G5[k].split(','));
+const ACC = { '\u00B4':'001', '^':'101', '~':'111' };
+const MAPA_ACC = {
+  '\u00C1':'A\u00B4','\u00C2':'A^','\u00C3':'A~','\u00C9':'E\u00B4','\u00CA':'E^','\u00CD':'I\u00B4',
+  '\u00D3':'O\u00B4','\u00D4':'O^','\u00D5':'O~','\u00DA':'U\u00B4'
+};
+for (const k in MAPA_ACC){
+  const base = MAPA_ACC[k][0], ac = MAPA_ACC[k][1];
+  FONT[k] = [ACC[ac]].concat(G5[base].split(','));
+}
+FONT['\u00C7'] = ['000','011','100','100','011','010'];
+
+function textoLargura(t, s){ return t.length*4*s - s; }
+function desenharTexto(ctx, t, x, y, cor, s, align){
+  s = s || 1;
+  if (align === 'centro') x -= Math.floor(textoLargura(t, s)/2);
+  if (align === 'direita') x -= textoLargura(t, s);
+  ctx.fillStyle = cor;
+  for (let i=0;i<t.length;i++){
+    const g = FONT[t[i]] || FONT['?'];
+    for (let r=0;r<6;r++){
+      const row = g[r];
+      for (let c=0;c<3;c++) if (row[c]==='1') ctx.fillRect(x+i*4*s+c*s, y+r*s, s, s);
+    }
+  }
+}
+function quebrarLinhas(t, maxC){
+  const palavras = t.split(' '), linhas = [];
+  let cur = '';
+  for (const p of palavras){
+    if ((cur+' '+p).trim().length > maxC){ linhas.push(cur.trim()); cur = p; }
+    else cur += ' ' + p;
+  }
+  if (cur.trim()) linhas.push(cur.trim());
+  return linhas;
+}
+
+/* ---------------- \u00cdcones ---------------- */
+function iconeGema(ctx, x, y){
+  ctx.fillStyle = PAL.gema;
+  ctx.fillRect(x+1,y,3,1); ctx.fillRect(x,y+1,5,2); ctx.fillRect(x+1,y+3,3,1); ctx.fillRect(x+2,y+4,1,1);
+  ctx.fillStyle = '#b9ffe0'; ctx.fillRect(x+1,y+1,1,1);
+}
+function iconeReliquia(ctx, x, y){
+  ctx.fillStyle = PAL.reliquia;
+  ctx.fillRect(x+2,y,2,1); ctx.fillRect(x+1,y+1,4,1); ctx.fillRect(x,y+2,6,2);
+  ctx.fillRect(x+1,y+4,4,1); ctx.fillRect(x+2,y+5,2,1);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(x+2,y+2,1,1);
+}
+function iconeCristal(ctx, x, y){
+  ctx.fillStyle = PAL.ciano;
+  ctx.fillRect(x+2,y,1,1); ctx.fillRect(x+1,y+1,3,1); ctx.fillRect(x,y+2,5,3);
+  ctx.fillRect(x+1,y+5,3,1); ctx.fillRect(x+2,y+6,1,1);
+  ctx.fillStyle = '#d8fbff'; ctx.fillRect(x+1,y+2,1,2);
+}
+function iconeEngrenagem(ctx, x, y){
+  ctx.fillStyle = '#c8c8d8';
+  ctx.fillRect(x+2,y,3,1); ctx.fillRect(x+2,y+6,3,1);
+  ctx.fillRect(x,y+2,1,3); ctx.fillRect(x+6,y+2,1,3);
+  ctx.fillRect(x+1,y+1,5,5);
+  ctx.fillStyle = PAL.carta0; ctx.fillRect(x+2,y+2,3,3);
+  ctx.fillStyle = '#c8c8d8'; ctx.fillRect(x+3,y+3,1,1);
+}
+function iconeEstrela(ctx, x, y){
+  ctx.fillStyle = PAL.ouro;
+  ctx.fillRect(x+3,y,1,1); ctx.fillRect(x+2,y+1,3,1); ctx.fillRect(x,y+2,7,2);
+  ctx.fillRect(x+1,y+4,5,1); ctx.fillRect(x+1,y+5,2,1); ctx.fillRect(x+4,y+5,2,1);
+}
+function iconeOlho(ctx, x, y){
+  ctx.fillStyle = '#f4f4f4';
+  ctx.fillRect(x+1,y+2,5,3); ctx.fillRect(x+2,y+1,3,1); ctx.fillRect(x+2,y+5,3,1);
+  ctx.fillStyle = '#1d4a80'; ctx.fillRect(x+3,y+2,2,3);
+  ctx.fillStyle = '#0c0a14'; ctx.fillRect(x+3,y+3,1,1);
+}
+function iconeChave(ctx, x, y){
+  ctx.fillStyle = PAL.ouro;
+  ctx.fillRect(x+1,y,3,1); ctx.fillRect(x,y+1,1,2); ctx.fillRect(x+3,y+1,1,2);
+  ctx.fillRect(x+2,y+3,1,4); ctx.fillRect(x+2,y+5,2,1); ctx.fillRect(x+2,y+6,3,1);
+}
+function iconeBateria(ctx, x, y){
+  ctx.fillStyle = '#3ee08f'; ctx.fillRect(x+1,y+1,5,6);
+  ctx.fillStyle = '#f7c948'; ctx.fillRect(x+2,y,2,1);
+  ctx.fillStyle = '#0c0a14'; ctx.fillRect(x+3,y+2,1,2); ctx.fillRect(x+2,y+4,1,1); ctx.fillRect(x+3,y+5,1,2);
+}
+function iconeCoroa(ctx, x, y){
+  ctx.fillStyle = PAL.ouro;
+  ctx.fillRect(x,y+2,1,3); ctx.fillRect(x+6,y+2,1,3); ctx.fillRect(x+3,y+1,1,2);
+  ctx.fillRect(x,y+5,7,2);
+  ctx.fillStyle = PAL.alerta; ctx.fillRect(x+1,y+5,1,1); ctx.fillRect(x+3,y+5,1,1); ctx.fillRect(x+5,y+5,1,1);
+}
+function iconePortal(ctx, x, y){
+  ctx.fillStyle = PAL.reliquia;
+  ctx.fillRect(x+2,y,3,1); ctx.fillRect(x+1,y+1,1,5); ctx.fillRect(x+5,y+1,1,5); ctx.fillRect(x+2,y+6,3,1);
+  ctx.fillStyle = '#141024'; ctx.fillRect(x+2,y+2,3,3);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(x+3,y+3,1,1);
+}
+function iconeArtefato(ctx, x, y){
+  ctx.fillStyle = PAL.antiga;
+  ctx.fillRect(x+3,y,1,1); ctx.fillRect(x+2,y+1,3,1); ctx.fillRect(x+1,y+2,5,3); ctx.fillRect(x+2,y+5,3,1); ctx.fillRect(x+3,y+6,1,1);
+  ctx.fillStyle = PAL.ciano; ctx.fillRect(x+3,y+3,1,1);
+}
+function desenharSimbolo(ctx, id, x, y){
+  if (id==='CRISTAL') iconeCristal(ctx,x,y);
+  else if (id==='ENGRENAGEM') iconeEngrenagem(ctx,x,y);
+  else if (id==='ESTRELA') iconeEstrela(ctx,x,y);
+  else if (id==='OLHO') iconeOlho(ctx,x,y);
+  else if (id==='CHAVE') iconeChave(ctx,x,y);
+  else if (id==='BATERIA') iconeBateria(ctx,x,y);
+  else if (id==='COROA') iconeCoroa(ctx,x,y);
+  else if (id==='PORTAL') iconePortal(ctx,x,y);
+  else iconeArtefato(ctx,x,y);
+}
+
+/* ---------------- Depurador ---------------- */
+const DebugManager = {
+  visivel:false, logs:[], ultimoErro:'-', fps:0, tempoStats:0,
+  el:null, elLog:null, elStats:null,
+  init: protegido(function(){
+    this.el = document.getElementById('dbg');
+    this.elLog = document.getElementById('dbgLog');
+    this.elStats = document.getElementById('dbgStats');
+    const self = this;
+    document.getElementById('dbgBtn').addEventListener('click', function(){ self.mostrar(!self.visivel); });
+    document.getElementById('dbgHide').addEventListener('click', function(){ self.mostrar(false); });
+    document.getElementById('dbgClear').addEventListener('click', function(){ self.logs = []; self.atualizarLog(); });
+    ['log','warn','error'].forEach(function(nivel){
+      const orig = console[nivel].bind(console);
+      console[nivel] = function(){
+        orig.apply(null, arguments);
+        self.push(nivel, Array.prototype.map.call(arguments, function(a){
+          try { return (typeof a === 'object') ? JSON.stringify(a) : String(a); } catch(e){ return String(a); }
+        }).join(' '));
+      };
+    });
+    window.onerror = function(msg, src, ln){ self.push('error', 'ERRO GLOBAL: '+msg+' (linha '+ln+')'); self.ultimoErro = String(msg); return true; };
+    window.onunhandledrejection = function(ev){ self.push('error', 'PROMESSA: '+String(ev.reason)); self.ultimoErro = String(ev.reason); };
+  }),
+  mostrar(v){ this.visivel = v; this.el.hidden = !v; if (v) this.atualizarLog(); },
+  push(nivel, msg){
+    const t = new Date();
+    const hh = ('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+':'+('0'+t.getSeconds()).slice(-2);
+    this.logs.push({nivel:nivel, msg: hh+' '+msg});
+    if (this.logs.length > 80) this.logs.shift();
+    if (nivel === 'error') this.ultimoErro = msg;
+    if (this.visivel) this.atualizarLog();
+  },
+  log(m){ this.push('log', m); },
+  erro(m){ this.push('error', m); },
+  atualizarLog(){
+    this.elLog.innerHTML = this.logs.map(function(l){
+      const cls = l.nivel==='error' ? 'e' : (l.nivel==='warn' ? 'w' : '');
+      const txt = l.msg.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+      return '<span class="'+cls+'">'+txt+'</span>';
+    }).join('\n');
+    this.elLog.scrollTop = this.elLog.scrollHeight;
+  },
+  atualizarStats(dt){
+    this.fps = this.fps*0.9 + (dt>0 ? 1/dt : 60)*0.1;
+    this.tempoStats += dt;
+    if (this.tempoStats < 0.5 || !this.visivel) return;
+    this.tempoStats = 0;
+    const d = Game.infoDebug();
+    this.elStats.textContent =
+      'FPS: '+Math.round(this.fps)+' | FRAG: '+fmt(d.frag)+' | REL: '+d.rel+
+      '\nCART\u00C3O: '+d.cartao+' | RASPA: '+d.raspa+
+      '\nAUTO: '+d.auto+' | N\u00CDVEL: '+d.nivel+' | SAVE: '+d.save+
+      '\nEVENTO: '+d.evento+'\nERRO: '+this.ultimoErro;
+  }
+};
+
+/* ---------------- Estado ---------------- */
+const GameState = {
+  fragmentos: 0,
+  reliquias: 0,
+  totalReliquias: 0,
+  cartasRaspadas: 0,
+  totalFragmentos: 0,
+  nivelDescoberta: 0,
+  melhorias: { ponta:0, eficiencia:0, leitura:0, amuleto:0, ima:0, catalogo:0, pericia:0, maquina:0, turbina:0 },
+  autoLigada: true,
+  passoTutorial: 0,
+  abaMelhoria: 'RASPAGEM',
+  abaColecao: 'REL',
+  stats: { perfeitas:0, combos:0, lendarias:0, sessao:0 },
+  config: { vibracao: true, som: true },
+  tempoJogo: 0,
+  temSave: false
+};
+
+/* ---------------- Save ---------------- */
+const SaveManager = {
+  ultimoSave: '-', ultimoT: 0,
+  salvar(){
+    try {
+      const dados = {
+        v:5, t:Date.now(),
+        frag:GameState.fragmentos, rel:GameState.reliquias, totalRel:GameState.totalReliquias,
+        cartas:GameState.cartasRaspadas, totalFrag:GameState.totalFragmentos,
+        mels:GameState.melhorias, autoLig:GameState.autoLigada,
+        tut:GameState.passoTutorial, cfg:GameState.config, tempo:GameState.tempoJogo,
+        col:CollectionManager.dados, combosC:CollectionManager.combos,
+        selos:AchievementManager.selos, stats:GameState.stats
+      };
+      localStorage.setItem(CHAVE_SAVE, JSON.stringify(dados));
+      const d = new Date();
+      this.ultimoSave = ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);
+      this.ultimoT = dados.t;
+      GameState.temSave = true;
+    } catch(e){ DebugManager.erro('FALHA AO SALVAR: '+e.message); }
+  },
+  carregar(){
+    try {
+      const bruto = localStorage.getItem(CHAVE_SAVE);
+      if (!bruto) return false;
+      const d = JSON.parse(bruto);
+      GameState.fragmentos = d.frag||0;
+      GameState.reliquias = d.rel||0;
+      GameState.totalReliquias = d.totalRel!=null ? d.totalRel : (d.rel||0);
+      GameState.cartasRaspadas = d.cartas||0;
+      GameState.totalFragmentos = d.totalFrag||0;
+      if (d.mels){ for (const k in GameState.melhorias){ if (d.mels[k]!=null) GameState.melhorias[k] = d.mels[k]; } }
+      else if (d.mel!=null){ GameState.melhorias.ponta = d.mel; }
+      if (d.autoLig != null) GameState.autoLigada = !!d.autoLig;
+      GameState.passoTutorial = (d.tut!=null) ? d.tut : 4;
+      if (d.cfg){ GameState.config.vibracao = d.cfg.vibracao!==false; GameState.config.som = d.cfg.som!==false; }
+      GameState.tempoJogo = d.tempo||0;
+      if (d.col) CollectionManager.dados = d.col;
+      if (d.combosC) CollectionManager.combos = d.combosC;
+      if (d.selos) AchievementManager.selos = d.selos;
+      if (d.stats){ for (const k in GameState.stats){ if (d.stats[k]!=null) GameState.stats[k] = d.stats[k]; } }
+      GameState.stats.sessao = 0;
+      GameState.temSave = true;
+      this.ultimoT = d.t||0;
+      return true;
+    } catch(e){ DebugManager.erro('FALHA AO CARREGAR: '+e.message); return false; }
+  },
+  apagar(){
+    try { localStorage.removeItem(CHAVE_SAVE); } catch(e){}
+    GameState.temSave = false;
+  }
+};
+function saveGame(){ SaveManager.salvar(); }
+function loadGame(){ return SaveManager.carregar(); }
+
+/* ---------------- Economia ---------------- */
+const EconomyManager = {
+  adicionar(n){ GameState.fragmentos += n; GameState.totalFragmentos += n; },
+  gastar(n){ if (GameState.fragmentos >= n){ GameState.fragmentos -= n; return true; } return false; },
+  pode(n){ return GameState.fragmentos >= n; }
+};
+
+/* ---------------- N\u00edveis de descoberta ---------------- */
+const NIVEIS_DESCOBERTA = [
+  {nome:'REL\u00CDQUIAS COMUNS',       rel:0,   mult:1,    cor:'#41c7d8', tint:null},
+  {nome:'REL\u00CDQUIAS ESTRANHAS',    rel:5,   mult:1.25, cor:'#3ee08f', tint:'rgba(62,224,143,0.08)'},
+  {nome:'REL\u00CDQUIAS ANTIGAS',      rel:15,  mult:1.5,  cor:'#c9834a', tint:'rgba(201,131,74,0.10)'},
+  {nome:'REL\u00CDQUIAS MEC\u00C2NICAS',rel:40, mult:2,    cor:'#8fd8ff', tint:'rgba(65,199,216,0.10)'},
+  {nome:'REL\u00CDQUIAS DIMENSIONAIS', rel:100, mult:3,    cor:'#b06ae0', tint:'rgba(176,106,224,0.12)'}
+];
+function nivelDescobertaAtual(){
+  let n = 0;
+  for (let i=0;i<NIVEIS_DESCOBERTA.length;i++){
+    if (GameState.totalReliquias >= NIVEIS_DESCOBERTA[i].rel) n = i;
+  }
+  return n;
+}
+
+/* ---------------- Tipos de carta ---------------- */
+const TIPOS_CARTA = {
+  COMUM:      {nome:'COMUM',        cor:PAL.ciano,    custo:4,   min:8,   max:15,  peso:100, desb:0,  rank:0},
+  INCOMUM:    {nome:'INCOMUM',      cor:PAL.gema,     custo:10,  min:18,  max:30,  peso:45,  desb:5,  rank:1},
+  RARA:       {nome:'RARA',         cor:PAL.ouro,     custo:25,  min:45,  max:70,  peso:22,  desb:15, rank:2},
+  ANTIGA:     {nome:'ANTIGA',       cor:PAL.antiga,   custo:60,  min:110, max:170, peso:12,  desb:30, rank:2},
+  INSTAVEL:   {nome:'INST\u00C1VEL',cor:PAL.alerta,   custo:40,  min:20,  max:200, peso:14,  desb:20, rank:1},
+  MISTERIOSA: {nome:'MISTERIOSA',   cor:PAL.reliquia, custo:50,  min:30,  max:120, peso:10,  desb:40, rank:2},
+  LENDARIA:   {nome:'LEND\u00C1RIA',cor:'#ffffff',    custo:200, min:500, max:800, peso:3,   desb:60, rank:3}
+};
+const SIMBOLOS = [
+  {id:'CRISTAL',tier:0}, {id:'ESTRELA',tier:0}, {id:'ENGRENAGEM',tier:0},
+  {id:'OLHO',tier:1}, {id:'CHAVE',tier:1}, {id:'BATERIA',tier:1},
+  {id:'COROA',tier:2}, {id:'PORTAL',tier:2}, {id:'ARTEFATO',tier:2}
+];
+
+/* ---------------- Eventos especiais (Fase 5) ---------------- */
+const EVENTOS = {
+  CHUVA:    {nome:'CHUVA DE REL\u00CDQUIAS!', desc:'CART\u00D5ES -50%'},
+  FALHA:    {nome:'FALHA NA M\u00C1QUINA!',   desc:'AUTO INST\u00C1VEL'},
+  ANTIGA:   {nome:'DESCOBERTA ANTIGA!',       desc:'ANTIGA GR\u00C1TIS'},
+  SINAL:    {nome:'SINAL DESCONHECIDO!',      desc:'S\u00CDMBOLOS ESTRANHOS'},
+  PESQUISA: {nome:'TEMPO DE PESQUISA!',       desc:'MELHORIAS -30%'}
+};
+const EventManager = {
+  evento:null, tempoRestante:0, proximo:rndi(60,120), fatorFalha:1, tickFalha:0,
+  status(){ return this.evento ? this.evento.id : 'NENHUM'; },
+  custoCartaMult(){ return (this.evento && this.evento.id==='CHUVA') ? 0.5 : 1; },
+  custoMelhoriaMult(){ return (this.evento && this.evento.id==='PESQUISA') ? 0.7 : 1; },
+  simboloForcado(){ return (this.evento && this.evento.id==='SINAL') ? 2 : -1; },
+  fatorMaquina(){ return (this.evento && this.evento.id==='FALHA') ? this.fatorFalha : 1; },
+  update(dt){
+    if (GameState.passoTutorial < 4) return;
+    if (UIManager.tela === 'titulo') return;
+    if (Game.relatorioOffline) return;
+    if (this.evento){
+      this.tempoRestante -= dt;
+      if (this.evento.id==='CHUVA' && rnd() < dt*3) ParticleManager.gerar(rndi(0,W), -2, PAL.reliquia, 1, 20, 1.2);
+      if (this.evento.id==='FALHA'){
+        this.tickFalha -= dt;
+        if (this.tickFalha <= 0){ this.tickFalha = 2; this.fatorFalha = rnd()<0.5 ? 0.4 : 3; }
+      }
+      if (this.tempoRestante <= 0) this.encerrar();
+    } else {
+      this.proximo -= dt;
+      if (this.proximo <= 0) this.iniciar();
+    }
+  },
+  iniciar(){
+    const ids = ['CHUVA','FALHA','ANTIGA','SINAL','PESQUISA'];
+    const id = ids[rndi(0, ids.length-1)];
+    this.evento = { id:id, nome:EVENTOS[id].nome, desc:EVENTOS[id].desc };
+    this.tempoRestante = rndi(20,30);
+    this.proximo = rndi(60,120);
+    this.fatorFalha = 1; this.tickFalha = 0;
+    if (id === 'ANTIGA'){
+      CardManager.ofertaForcada = 'ANTIGA';
+      CardManager.proximaGratis = true;
+    }
+    FloatTexts.add(W/2, 30, this.evento.nome, PAL.alerta);
+    FloatTexts.add(W/2, 40, this.evento.desc, PAL.texto);
+    AudioManager.sfx('tier');
+    saveGame();
+  },
+  encerrar(){
+    this.evento = null; this.fatorFalha = 1;
+  },
+  // compatibilidade de stub
+  update2(dt){}
+};
+function updateEvents(dt){ EventManager.update(dt); }
+
+/* ---------------- Gerador de cartas ---------------- */
+const CardGenerator = {
+  rolarOferta(){
+    if (GameState.cartasRaspadas === 0) return 'COMUM';
+    const chaves = [];
+    let total = 0;
+    for (const k in TIPOS_CARTA){
+      if (TIPOS_CARTA[k].desb <= GameState.cartasRaspadas){ chaves.push(k); total += TIPOS_CARTA[k].peso; }
+    }
+    if (total <= 0) return 'COMUM';
+    let r = rnd()*total;
+    for (const k of chaves){ r -= TIPOS_CARTA[k].peso; if (r <= 0) return k; }
+    return 'COMUM';
+  },
+  rolarSimbolo(rank){
+    const forcado = EventManager.simboloForcado();
+    let tier;
+    if (forcado >= 0) tier = forcado;
+    else {
+      const r = rnd()*100;
+      tier = 0;
+      if (r < 4 + rank*7) tier = 2;
+      else if (r < 20 + rank*12) tier = 1;
+    }
+    const opts = SIMBOLOS.filter(function(s){ return s.tier === tier; });
+    return opts[rndi(0, opts.length-1)];
+  },
+  gerar(tipoKey){
+    const t = TIPOS_CARTA[tipoKey] || TIPOS_CARTA.COMUM;
+    let sims;
+    const chanceCombo = 0.08 + 0.02 * (GameState.melhorias.amuleto||0);
+    if (rnd() < chanceCombo){
+      const s = this.rolarSimbolo(t.rank);
+      sims = [s, s, s];
+    } else {
+      sims = [this.rolarSimbolo(t.rank), this.rolarSimbolo(t.rank), this.rolarSimbolo(t.rank)];
+    }
+    const combo = sims[0].id === sims[1].id && sims[1].id === sims[2].id;
+    return {
+      tipo: tipoKey, tipoNome: t.nome, cor: t.cor, rank: t.rank,
+      valor: rndi(t.min, t.max),
+      serial: GameState.cartasRaspadas + 1,
+      simbolos: sims, combo: combo, mult: 1, msgInstavel: ''
+    };
+  }
+};
+
+/* ---------------- Cole\u00e7\u00e3o (Fase 5) ---------------- */
+const CollectionManager = {
+  dados: {}, combos: {},
+  registrar(carta){
+    const vistos = {};
+    for (const s of carta.simbolos){
+      if (vistos[s.id]) continue;
+      vistos[s.id] = true;
+      const d = this.dados[s.id] || (this.dados[s.id] = { qtd:0, primeira:0 });
+      d.qtd++;
+      if (!d.primeira) d.primeira = Date.now();
+    }
+    if (carta.combo) this.combos[carta.simbolos[0].id] = true;
+  },
+  contagem(){
+    let n = 0;
+    for (const s of SIMBOLOS){ if (this.dados[s.id] && this.dados[s.id].qtd > 0) n++; }
+    return n;
+  },
+  pct(){ return Math.floor(this.contagem()*100/SIMBOLOS.length); }
+};
+
+/* ---------------- Selos / conquistas (Fase 5) ---------------- */
+const AchievementManager = {
+  selos: [], t: 0,
+  defs: [
+    {id:'primeira',   nome:'PRIMEIRA DESCOBERTA',      desc:'RASPE 1 CART\u00C3O',            cond:function(){ return GameState.cartasRaspadas>=1; }},
+    {id:'semparar',   nome:'SEM PARAR',                desc:'10 CART\u00D5ES NA SESS\u00C3O', cond:function(){ return GameState.stats.sessao>=10; }},
+    {id:'cacador',    nome:'CA\u00C7ADOR DE REL\u00CDQUIAS', desc:'ACUMULE 10 REL',            cond:function(){ return GameState.totalReliquias>=10; }},
+    {id:'mestre',     nome:'MESTRE DA RASPAGEM',       desc:'5 RASPADAS PERFEITAS',           cond:function(){ return GameState.stats.perfeitas>=5; }},
+    {id:'maquina',    nome:'M\u00C1QUINA DESBLOQUEADA',desc:'CONSTRUA O RASPADOR',            cond:function(){ return (GameState.melhorias.maquina||0)>=1; }},
+    {id:'lendaria',   nome:'REL\u00CDQUIA LEND\u00C1RIA', desc:'COLETE UMA LEND\u00C1RIA',    cond:function(){ return GameState.stats.lendarias>=1; }},
+    {id:'alem',       nome:'AL\u00C9M DA SUPERF\u00CDCIE', desc:'N\u00CDVEL DE DESCOBERTA 3', cond:function(){ return GameState.nivelDescoberta>=2; }},
+    {id:'colecionador', nome:'COLECIONADOR',           desc:'DESCUBRA AS 9 REL\u00CDQUIAS',   cond:function(){ return CollectionManager.contagem()>=9; }},
+    {id:'combos',     nome:'MESTRE DOS COMBOS',        desc:'FA\u00C7A 3 COMBOS',             cond:function(){ return GameState.stats.combos>=3; }}
+  ],
+  tem(id){ return this.selos.indexOf(id) >= 0; },
+  bonus(){ return 1 + 0.01 * this.selos.length; },
+  update(dt){
+    this.t += dt;
+    if (this.t < 2) return;
+    this.t = 0;
+    for (const d of this.defs){
+      if (!this.tem(d.id) && d.cond()){
+        this.selos.push(d.id);
+        FloatTexts.add(W/2, 30, 'SELO: '+d.nome, PAL.ouro);
+        AudioManager.sfx('tier');
+        saveGame();
+      }
+    }
+  }
+};
+
+/* ---------------- Recompensas ---------------- */
+const RewardSystem = {
+  calcular(carta, perfeita){
+    let v = carta.valor;
+    if (carta.combo) v *= 2;
+    v *= (carta.mult || 1);
+    v *= NIVEIS_DESCOBERTA[GameState.nivelDescoberta].mult;
+    v *= 1 + 0.1 * (GameState.melhorias.pericia||0);
+    v *= AchievementManager.bonus();
+    if (perfeita) v += Math.ceil(v * 0.5);
+    return Math.floor(v);
+  },
+  ganhoReliquia(carta){
+    let rel = 0;
+    if (carta.tipo==='RARA' || carta.tipo==='ANTIGA' || carta.tipo==='INSTAVEL' || carta.tipo==='MISTERIOSA') rel += 1;
+    if (carta.tipo==='LENDARIA') rel += 3;
+    if (carta.combo && carta.simbolos[0].tier >= 1) rel += 1;
+    return rel;
+  }
+};
+
+/* ---------------- Raspagem ---------------- */
+const ScratchSystem = {
+  cv:null, ctx:null, grade:null, cols:20, rows:14, cel:5,
+  reveladas:0, pct:0, ultimo:null, stamp:null, stampR:0,
+  init(){
+    this.cv = mkCanvas(CARD.w, CARD.h);
+    this.ctx = this.cv.getContext('2d');
+    this.grade = new Uint8Array(this.cols*this.rows);
+  },
+  limiar(){ return 0.70 - 0.05 * (GameState.melhorias.leitura||0); },
+  obterStamp(r){
+    if (this.stamp && this.stampR === r) return this.stamp;
+    const s = mkCanvas(r*2+2, r*2+2);
+    const c = s.getContext('2d');
+    c.fillStyle = '#000';
+    c.beginPath(); c.arc(r+1, r+1, r, 0, 6.2832); c.fill();
+    this.stamp = s; this.stampR = r;
+    return s;
+  },
+  novaCarta(){
+    const c = this.ctx;
+    c.globalCompositeOperation = 'source-over';
+    c.clearRect(0,0,CARD.w,CARD.h);
+    c.fillStyle = PAL.folha0; c.fillRect(0,0,CARD.w,CARD.h);
+    c.fillStyle = PAL.folha1;
+    for (let y=0;y<CARD.h;y+=4) c.fillRect(0,y,CARD.w,1);
+    c.fillStyle = PAL.folha2;
+    for (let y=1;y<CARD.h;y+=6) for (let x=(y%12===1?1:3);x<CARD.w;x+=6) c.fillRect(x,y,1,1);
+    desenharTexto(c,'RASPE!',CARD.w/2,30,'rgba(30,40,55,0.85)',1,'centro');
+    c.fillStyle = 'rgba(255,255,255,0.5)';
+    c.fillRect(0,0,CARD.w,1); c.fillRect(0,0,1,CARD.h);
+    this.grade.fill(0); this.reveladas = 0; this.pct = 0; this.ultimo = null;
+  },
+  raspar(px, py, raio){
+    let lx = px - CARD.x, ly = py - CARD.y;
+    lx = clamp(lx, -2, CARD.w+2); ly = clamp(ly, -2, CARD.h+2);
+    const pts = [];
+    if (this.ultimo){
+      const dx = lx-this.ultimo.x, dy = ly-this.ultimo.y;
+      const dist = Math.sqrt(dx*dx+dy*dy);
+      const passos = clamp(Math.floor(dist/2), 1, 6);
+      for (let i=1;i<=passos;i++) pts.push({x:this.ultimo.x+dx*i/passos, y:this.ultimo.y+dy*i/passos});
+    } else pts.push({x:lx,y:ly});
+    this.ultimo = {x:lx,y:ly};
+    const c = this.ctx;
+    const st = this.obterStamp(raio);
+    c.globalCompositeOperation = 'destination-out';
+    const rMark = raio + 1 + (GameState.melhorias.eficiencia||0);
+    for (const p of pts){
+      c.drawImage(st, Math.round(p.x)-raio-1, Math.round(p.y)-raio-1);
+      this.marcarGrade(p.x, p.y, rMark);
+    }
+  },
+  marcarGrade(x, y, r){
+    const c0 = clamp(Math.floor((x-r)/this.cel),0,this.cols-1);
+    const c1 = clamp(Math.floor((x+r)/this.cel),0,this.cols-1);
+    const r0 = clamp(Math.floor((y-r)/this.cel),0,this.rows-1);
+    const r1 = clamp(Math.floor((y+r)/this.cel),0,this.rows-1);
+    for (let gy=r0; gy<=r1; gy++) for (let gx=c0; gx<=c1; gx++){
+      const idx = gy*this.cols+gx;
+      if (!this.grade[idx]){
+        const cx = gx*this.cel+this.cel/2, cy = gy*this.cel+this.cel/2;
+        const dx = cx-x, dy = cy-y;
+        if (dx*dx+dy*dy <= r*r){ this.grade[idx]=1; this.reveladas++; }
+      }
+    }
+    this.pct = this.reveladas / (this.cols*this.rows);
+  },
+  fimTraco(){ this.ultimo = null; }
+};
+
+/* ---------------- Part\u00edculas ---------------- */
+const ParticleManager = { pool: [], max: 220 };
+ParticleManager.init = function(){
+  this.pool = [];
+  for (let i=0;i<this.max;i++) this.pool.push({on:false,x:0,y:0,vx:0,vy:0,vida:0,cor:'#fff',tam:1});
+};
+ParticleManager.gerar = function(x,y,cor,n,vel,vida){
+  let criados = 0;
+  for (const p of this.pool){
+    if (criados >= n) break;
+    if (p.on) continue;
+    const a = rnd()*6.2832, v = vel*(0.4+rnd()*0.8);
+    p.on = true; p.x = x; p.y = y;
+    p.vx = Math.cos(a)*v; p.vy = Math.sin(a)*v - vel*0.4;
+    p.vida = vida*(0.6+rnd()*0.6); p.cor = cor; p.tam = rnd()<0.3?2:1;
+    criados++;
+  }
+};
+ParticleManager.update = function(dt){
+  for (const p of this.pool){
+    if (!p.on) continue;
+    p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 60*dt; p.vida -= dt;
+    if (p.vida <= 0) p.on = false;
+  }
+};
+ParticleManager.render = function(ctx){
+  for (const p of this.pool){
+    if (!p.on) continue;
+    ctx.globalAlpha = clamp(p.vida*3, 0, 1);
+    ctx.fillStyle = p.cor;
+    ctx.fillRect(Math.round(p.x), Math.round(p.y), p.tam, p.tam);
+  }
+  ctx.globalAlpha = 1;
+};
+function updateParticles(dt){ ParticleManager.update(dt); }
+
+/* ---------------- Textos flutuantes ---------------- */
+const FloatTexts = {
+  lista: [],
+  add(x,y,t,cor){ this.lista.push({x:x,y:y,t:t,cor:cor,vida:1.1}); },
+  update(dt){ for (const f of this.lista){ f.y -= 12*dt; f.vida -= dt; } this.lista = this.lista.filter(function(f){ return f.vida>0; }); },
+  render(ctx){ for (const f of this.lista){ ctx.globalAlpha = clamp(f.vida,0,1); desenharTexto(ctx,f.t,Math.round(f.x),Math.round(f.y),f.cor,1,'centro'); } ctx.globalAlpha = 1; }
+};
+
+/* ---------------- Melhorias ---------------- */
+const MELHORIAS = {
+  ponta:      {nome:'PONTA REFOR\u00C7ADA',   cat:'RASPAGEM', max:5, moeda:'frag', custoBase:20,  fator:1.7, desc:'RAIO +1',          tier:1},
+  eficiencia: {nome:'RASPAGEM EFICIENTE',     cat:'RASPAGEM', max:3, moeda:'frag', custoBase:60,  fator:2.2, desc:'COBERTURA +1',     tier:1},
+  leitura:    {nome:'LEITURA R\u00C1PIDA',    cat:'RASPAGEM', max:2, moeda:'frag', custoBase:120, fator:3,   desc:'LIMIAR -5%',       tier:2},
+  amuleto:    {nome:'AMULETO DA SORTE',       cat:'SORTE',    max:5, moeda:'frag', custoBase:50,  fator:2,   desc:'COMBO +2%',        tier:2},
+  ima:        {nome:'\u00CDM\u00C3 DE REL\u00CDQUIAS', cat:'SORTE', max:5, moeda:'frag', custoBase:90, fator:2.1, desc:'REL DOBRO 10%', tier:3},
+  catalogo:   {nome:'CAT\u00C1LOGO',          cat:'PESQUISA', max:1, moeda:'rel',  custoBase:3,   fator:1,   desc:'DICA DE COMBO',    tier:2},
+  pericia:    {nome:'PER\u00CDCIA',           cat:'PESQUISA', max:5, moeda:'rel',  custoBase:2,   fator:1.8, desc:'VALOR +10%',       tier:2},
+  maquina:    {nome:'RASPADOR MEC\u00C2NICO', cat:'M\u00C1QUINA', max:5, moeda:'frag', custoBase:300, fator:2.5, desc:'VELOCIDADE X2',  tier:2},
+  turbina:    {nome:'TURBINA OFFLINE',        cat:'M\u00C1QUINA', max:3, moeda:'rel',  custoBase:4,  fator:2,  desc:'OFFLINE +1H +15%', tier:3}
+};
+const UpgradeManager = {
+  nivel(id){ return GameState.melhorias[id]||0; },
+  custo(id){
+    const d = MELHORIAS[id];
+    return Math.floor(d.custoBase * Math.pow(d.fator, this.nivel(id)) * EventManager.custoMelhoriaMult());
+  },
+  raio(){ return 5 + this.nivel('ponta'); },
+  desbloqueada(id){ return MELHORIAS[id].tier <= GameState.nivelDescoberta + 1; },
+  podeComprar(id){
+    const d = MELHORIAS[id];
+    if (this.nivel(id) >= d.max) return false;
+    if (!this.desbloqueada(id)) return false;
+    const c = this.custo(id);
+    return d.moeda==='frag' ? EconomyManager.pode(c) : GameState.reliquias >= c;
+  },
+  comprar(id){
+    const d = MELHORIAS[id];
+    if (!this.podeComprar(id)) return false;
+    const c = this.custo(id);
+    if (d.moeda==='frag'){ if (!EconomyManager.gastar(c)) return false; }
+    else { if (GameState.reliquias < c) return false; GameState.reliquias -= c; }
+    GameState.melhorias[id] = this.nivel(id) + 1;
+    AudioManager.sfx('buy');
+    FloatTexts.add(80, 60, d.desc, PAL.ciano);
+    ParticleManager.gerar(80, 70, PAL.ciano, 10, 25, 0.5);
+    Tutorial.avancar('melhoria');
+    saveGame();
+    return true;
+  }
+};
+
+/* ---------------- Automa\u00e7\u00e3o ---------------- */
+const AutomationManager = {
+  autoX: 0, autoY: 0, acc: 0, accCompra: 0, accColeta: 0, trabalhando: false,
+  velocidade(){
+    const nv = GameState.melhorias.maquina||0;
+    if (nv < 1) return 0;
+    return 6 * Math.pow(2, nv-1) * EventManager.fatorMaquina();
+  },
+  status(){
+    const nv = GameState.melhorias.maquina||0;
+    if (nv < 1) return 'INATIVO';
+    return GameState.autoLigada ? ('ATIVO NV'+nv) : 'DESLIGADO';
+  },
+  pontoAtual(){ return { x: CARD.x + this.autoX, y: CARD.y + this.autoY }; },
+  update(dt){
+    this.trabalhando = false;
+    const nv = GameState.melhorias.maquina||0;
+    if (nv < 1 || !GameState.autoLigada) return;
+    if (Game.relatorioOffline) return;
+    if (UIManager.tela === 'titulo') return;
+    if (CardManager.estado === 'raspando'){
+      const lim = ScratchSystem.limiar();
+      if (ScratchSystem.pct < lim){
+        this.acc += this.velocidade() * dt * 1.4;
+        let n = Math.floor(this.acc);
+        this.acc -= n;
+        n = Math.min(n, 10);
+        if (n > 0){
+          this.trabalhando = true;
+          AudioManager.sfx('robot');
+          for (let i=0;i<n;i++){
+            this.autoX += 5;
+            if (this.autoX >= CARD.w){ this.autoX = 0; this.autoY += 5; if (this.autoY >= CARD.h) this.autoY = 0; }
+            ScratchSystem.raspar(CARD.x+this.autoX, CARD.y+this.autoY, 5);
+          }
+          CardManager.verificarProntidao();
+          if (rnd() < 0.3) ParticleManager.gerar(CARD.x+this.autoX, CARD.y+this.autoY, PAL.folha2, 1, 15, 0.3);
+        }
+      }
+    } else if (CardManager.estado === 'pronto'){
+      const tipo = CardManager.carta ? CardManager.carta.tipo : 'COMUM';
+      if (tipo==='COMUM' || tipo==='INCOMUM'){
+        this.accColeta += dt;
+        if (this.accColeta > 0.6){ this.accColeta = 0; CardManager.coletar(); }
+      } else this.accColeta = 0;
+    } else if (CardManager.estado === 'nenhum' && nv >= 2){
+      const oferta = CardManager.oferta;
+      if ((oferta==='COMUM' || oferta==='INCOMUM') && EconomyManager.pode(Math.floor(TIPOS_CARTA[oferta].custo * EventManager.custoCartaMult()))){
+        this.accCompra += dt;
+        if (this.accCompra > 1){ this.accCompra = 0; CardManager.comprar(); }
+      } else this.accCompra = 0;
+    }
+  }
+};
+function updateAutomation(dt){ AutomationManager.update(dt); }
+
+/* ---------------- Progresso offline ---------------- */
+function calcularOffline(tSave){
+  const nv = GameState.melhorias.maquina||0;
+  if (nv < 1 || !tSave) return null;
+  let seg = (Date.now() - tSave)/1000;
+  if (seg < 60) return null;
+  const cap = 7200 + 3600 * (GameState.melhorias.turbina||0);
+  seg = Math.min(seg, cap);
+  const vel = 6 * Math.pow(2, nv-1);
+  const tCarta = (70/vel) + 2.5;
+  const cartas = Math.floor(seg / tCarta);
+  if (cartas <= 0) return null;
+  const eff = 0.5 + 0.15 * (GameState.melhorias.turbina||0);
+  const base = GameState.cartasRaspadas >= 5 ? 18 : 12;
+  const mult = NIVEIS_DESCOBERTA[nivelDescobertaAtual()].mult * (1 + 0.1*(GameState.melhorias.pericia||0)) * AchievementManager.bonus();
+  const frag = Math.floor(cartas * base * mult * eff);
+  const rel = Math.floor(cartas/50);
+  return { seg: seg, cartas: cartas, frag: frag, rel: rel };
+}
+
+const LegacyManager = { status(){ return 'BLOQUEADO'; } }; // FASE 7
+
+/* ---------------- Gerente de cartas ---------------- */
+const CardManager = {
+  estado:'nenhum',
+  carta:null, oferta:null, ofertaForcada:null, proximaGratis:false,
+  baseCv:null, perfeita:false, tempoSumir:0,
+  comprar(){
+    if (this.estado !== 'nenhum') return;
+    if (!this.oferta) this.oferta = CardGenerator.rolarOferta();
+    const tipo = TIPOS_CARTA[this.oferta] ? this.oferta : 'COMUM';
+    let custo = GameState.cartasRaspadas === 0 ? 0 : TIPOS_CARTA[tipo].custo;
+    if (this.proximaGratis){ custo = 0; this.proximaGratis = false; }
+    custo = Math.floor(custo * EventManager.custoCartaMult());
+    if (!EconomyManager.gastar(custo)) return;
+    this.carta = CardGenerator.gerar(tipo);
+    this.perfeita = false;
+    this.desenharBase();
+    ScratchSystem.novaCarta();
+    this.estado = 'raspando';
+    this.oferta = null;
+    AudioManager.sfx('card');
+    Tutorial.avancar('comprar');
+    if (GameState.passoTutorial === 3) Tutorial.avancar('comprar2');
+  },
+  desenharBase(){
+    if (!this.baseCv){ this.baseCv = mkCanvas(CARD.w, CARD.h); }
+    const c = this.baseCv.getContext('2d');
+    const cart = this.carta;
+    c.clearRect(0,0,CARD.w,CARD.h);
+    c.fillStyle = cart.cor; c.fillRect(0,0,CARD.w,CARD.h);
+    c.fillStyle = PAL.carta0; c.fillRect(2,2,CARD.w-4,CARD.h-4);
+    c.fillStyle = PAL.carta1;
+    for (let y=3;y<CARD.h-3;y+=4) for (let x=3+((y>>2)%2)*2;x<CARD.w-3;x+=4) c.fillRect(x,y,1,1);
+    c.fillStyle = PAL.painelEsc; c.fillRect(4,4,CARD.w-8,9);
+    const misteriosa = cart.tipo==='MISTERIOSA';
+    const nomeFaixa = (misteriosa && (GameState.melhorias.catalogo||0)<1) ? '???' : ('CART\u00C3O '+cart.tipoNome);
+    desenharTexto(c, nomeFaixa, CARD.w/2, 6, cart.cor, 1, 'centro');
+    desenharSimbolo(c, cart.simbolos[0].id, 22, 26);
+    desenharSimbolo(c, cart.simbolos[1].id, 47, 26);
+    desenharSimbolo(c, cart.simbolos[2].id, 70, 26);
+    iconeGema(c, 34, 46);
+    if (misteriosa && (GameState.melhorias.catalogo||0)<1){
+      desenharTexto(c,'+?', 44, 46, PAL.ouro, 1);
+    } else {
+      desenharTexto(c,'+'+cart.valor, 44, 46, PAL.ouro, 1);
+    }
+    if (cart.combo && (GameState.melhorias.catalogo||0)>=1){
+      iconeOlho(c, CARD.w-12, 6);
+    }
+    if (cart.combo){
+      c.fillStyle = PAL.ouro;
+      c.fillRect(4,4,CARD.w-8,1); c.fillRect(4,CARD.h-5,CARD.w-8,1);
+    }
+    desenharTexto(c,'#'+cart.serial, CARD.w-6, CARD.h-9, PAL.ciano, 1, 'direita');
+  },
+  verificarProntidao(){
+    const lim = ScratchSystem.limiar();
+    if (this.estado === 'raspando' && ScratchSystem.pct >= lim){
+      this.estado = 'pronto';
+      if (this.carta.tipo === 'INSTAVEL'){
+        const r = rnd();
+        if (r < 0.4){ this.carta.mult = 1.5; this.carta.msgInstavel = 'SURPRESA! X1,5'; }
+        else if (r < 0.7){ this.carta.mult = 1; this.carta.msgInstavel = 'NORMAL'; }
+        else { this.carta.mult = 0.5; this.carta.msgInstavel = 'INST\u00C1VEL! X0,5'; }
+        FloatTexts.add(CARD.x+CARD.w/2, CARD.y+12, this.carta.msgInstavel, PAL.alerta);
+      }
+      if (this.carta.combo){
+        FloatTexts.add(CARD.x+CARD.w/2, CARD.y+16, 'COMBO! X2', PAL.ouro);
+        AudioManager.sfx('combo');
+      }
+      AudioManager.sfx('ready');
+      Game.tremor(0.12, 1);
+      if (this.carta.tipo === 'LENDARIA'){ Game.tremor(0.3, 1); Game.flash = 0.2; AudioManager.sfx('rare'); }
+      ParticleManager.gerar(CARD.x+CARD.w/2, CARD.y+CARD.h/2, PAL.ouro, 14, 30, 0.6);
+      Tutorial.avancar('revelar');
+    }
+    if (!this.perfeita && ScratchSystem.pct >= LIMIAR_PERFEITO){
+      this.perfeita = true;
+      FloatTexts.add(CARD.x+CARD.w/2, CARD.y+8, 'PERFEITO!', PAL.ouro);
+      AudioManager.sfx('perfect');
+    }
+  },
+  rasparPonto(x,y){
+    if (this.estado !== 'raspando' && this.estado !== 'pronto') return;
+    ScratchSystem.raspar(x, y, UpgradeManager.raio());
+    if (rnd() < 0.25) ParticleManager.gerar(x, y, PAL.folha2, 1, 18, 0.35);
+    this.verificarProntidao();
+  },
+  coletar(){
+    if (this.estado !== 'pronto') return;
+    const ganho = RewardSystem.calcular(this.carta, this.perfeita);
+    let rel = RewardSystem.ganhoReliquia(this.carta);
+    if (rel > 0 && rnd() < 0.1 * (GameState.melhorias.ima||0)){
+      rel *= 2;
+      FloatTexts.add(CARD.x+CARD.w/2, CARD.y+36, 'REL EM DOBRO!', PAL.reliquia);
+    }
+    EconomyManager.adicionar(ganho);
+    if (rel > 0){
+      GameState.reliquias += rel;
+      GameState.totalReliquias += rel;
+      FloatTexts.add(CARD.x+CARD.w/2, CARD.y+30, 'REL +'+rel, PAL.reliquia);
+      AudioManager.sfx('rare');
+    }
+    GameState.cartasRaspadas++;
+    GameState.stats.sessao++;
+    if (this.perfeita) GameState.stats.perfeitas++;
+    if (this.carta.combo) GameState.stats.combos++;
+    if (this.carta.tipo==='LENDARIA') GameState.stats.lendarias++;
+    CollectionManager.registrar(this.carta);
+    FloatTexts.add(CARD.x+CARD.w/2, CARD.y+20, '+'+fmt(ganho), PAL.gema);
+    ParticleManager.gerar(CARD.x+CARD.w/2, CARD.y+CARD.h/2, PAL.gema, 18, 34, 0.7);
+    Game.tremor(0.18, 1);
+    AudioManager.sfx('collect');
+    this.estado = 'sumindo'; this.tempoSumir = 0;
+    Tutorial.avancar('coletar');
+    saveGame();
+  },
+  update(dt){
+    if (this.estado === 'nenhum' && !this.oferta){
+      this.oferta = this.ofertaForcada || CardGenerator.rolarOferta();
+      this.ofertaForcada = null;
+    }
+    if (this.estado === 'sumindo'){
+      this.tempoSumir += dt;
+      if (this.tempoSumir > 0.4){ this.estado = 'nenhum'; this.carta = null; }
+    }
+  }
+};
+
+/* ---------------- Tutorial ---------------- */
+const Tutorial = {
+  textos: [
+    'BEM-VINDO! TOQUE EM COMPRAR CART\u00C3O PARA RECEBER SEU PRIMEIRO CART\u00C3O DE DESCOBERTA.',
+    'ARRASTE O DEDO SOBRE O CART\u00C3O PARA RASPAR A CAMADA PRATEADA.',
+    'REVELE 70% PARA VALIDAR A RECOMPENSA. RASPE 95% PARA GANHAR O B\u00D4NUS PERFEITO!',
+    'TOQUE EM COLETAR PARA GANHAR FRAGMENTOS.',
+    'USE FRAGMENTOS NO MENU MELHORIAS PARA EVOLUIR. BOM TRABALHO!'
+  ],
+  ativo(){ return GameState.passoTutorial < 4; },
+  avancar(acao){
+    const p = GameState.passoTutorial;
+    if (p===0 && acao==='comprar') GameState.passoTutorial = 1;
+    else if (p===1 && acao==='revelar') GameState.passoTutorial = 2;
+    else if (p===2 && acao==='coletar') GameState.passoTutorial = 3;
+    else if (p===3 && (acao==='melhoria' || acao==='comprar2')) GameState.passoTutorial = 4;
+    if (GameState.passoTutorial !== p && GameState.passoTutorial >= 4) saveGame();
+  },
+  pular(){ GameState.passoTutorial = 4; saveGame(); }
+};
+
+/* ---------------- Interface ---------------- */
+const UIManager = {
+  tela:'titulo',
+  botoes:[],
+  confirmarApagar:false, tempoConfirmar:0,
+  ir(t){
+    this.tela = t;
+    AudioManager.ui('click');
+    if (t === 'titulo') AudioManager.tocarBGM('menu');
+  },
+  botao(id,x,y,w,h,rotulo,ativo,cb,semDesenho){
+    this.botoes.push({id:id,x:x,y:y,w:w,h:h,rotulo:rotulo,ativo:ativo,cb:cb,semDesenho:!!semDesenho});
+  },
+  cursorSobre(x,y,w,h){
+    return InputManager.cursorVisivel && InputManager.pos &&
+      InputManager.pos.x>=x && InputManager.pos.x<=x+w &&
+      InputManager.pos.y>=y && InputManager.pos.y<=y+h;
+  },
+  tocar(x,y){
+    for (let i=this.botoes.length-1;i>=0;i--){
+      const b = this.botoes[i];
+      if (b.ativo && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h){
+        AudioManager.ui('click'); b.cb(); return true;
+      }
+    }
+    return false;
+  },
+  desenharBotao(ctx,b){
+    const hov = b.ativo && this.cursorSobre(b.x,b.y,b.w,b.h);
+    ctx.fillStyle = b.ativo ? (hov ? '#332a52' : PAL.painel) : PAL.painelEsc;
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle = b.ativo ? (hov ? '#6a5a9e' : '#4a3f6e') : '#2a2340';
+    ctx.fillRect(b.x,b.y,b.w,1); ctx.fillRect(b.x,b.y,1,b.h);
+    ctx.fillStyle = PAL.escuro;
+    ctx.fillRect(b.x,b.y+b.h-1,b.w,1); ctx.fillRect(b.x+b.w-1,b.y,1,b.h);
+    if (hov){
+      ctx.fillStyle = PAL.ouro;
+      ctx.fillRect(b.x,b.y,b.w,1); ctx.fillRect(b.x,b.y+b.h-1,b.w,1);
+    }
+    desenharTexto(ctx, b.rotulo, b.x+b.w/2, b.y+Math.floor(b.h/2)-3, b.ativo?PAL.texto:'#6a6380', 1, 'centro');
+  },
+  render(ctx, tempo){
+    this.botoes = [];
+    if (this.tela==='titulo') this.renderTitulo(ctx, tempo);
+    else if (this.tela==='jogo') this.renderJogo(ctx, tempo);
+    else if (this.tela==='melhorias') this.renderMelhorias(ctx);
+    else if (this.tela==='config') this.renderConfig(ctx);
+    else if (this.tela==='colecao') this.renderColecao(ctx);
+    else if (this.tela==='creditos') this.renderCreditos(ctx);
+    for (const b of this.botoes) if (!b.semDesenho) this.desenharBotao(ctx, b);
+  },
+
+  renderTitulo(ctx, tempo){
+    ctx.fillStyle = PAL.fundo; ctx.fillRect(0,0,W,HH);
+    for (const s of Game.estrelas){
+      if (s[1] < HH){ ctx.fillStyle = s[2] ? '#3a3357' : '#574a7a'; ctx.fillRect(s[0], s[1], 1, 1); }
+    }
+    const ly = clamp(Math.floor(HH*0.14), 12, 44);
+    const pulo = Math.floor(Math.sin(tempo*2));
+    desenharTexto(ctx,'RASPA', W/2+1, ly+pulo+1, PAL.alerta, 2, 'centro');
+    desenharTexto(ctx,'RASPA', W/2, ly+pulo, PAL.ouro, 2, 'centro');
+    desenharTexto(ctx,'REL\u00CDQUIAS', W/2+1, ly+16+pulo+1, PAL.alerta, 2, 'centro');
+    desenharTexto(ctx,'REL\u00CDQUIAS', W/2, ly+16+pulo, PAL.ouro, 2, 'centro');
+    iconeGema(ctx, 24, ly+4+pulo); iconeReliquia(ctx, 129, ly+20+pulo);
+    if (((tempo*2)|0)%2===0){ ctx.fillStyle = '#ffffff'; ctx.fillRect(131,ly+19+pulo,1,1); }
+
+    const bx = 30, bw = 100, bh = 11;
+    const sy = Math.floor((HH - 67)/2) + 10;
+    this.botao('jogar', bx, sy, bw, bh, 'JOGAR', true, function(){ UIManager.ir('jogo'); AudioManager.tocarBGM('jogo'); });
+    this.botao('cont', bx, sy+14, bw, bh, 'CONTINUAR', GameState.temSave, function(){ UIManager.ir('jogo'); AudioManager.tocarBGM('jogo'); });
+    this.botao('conf', bx, sy+28, bw, bh, 'CONFIGURA\u00C7\u00D5ES', true, function(){ UIManager.ir('config'); });
+    this.botao('cole', bx, sy+42, bw, bh, 'COLE\u00C7\u00C3O', true, function(){ UIManager.ir('colecao'); });
+    this.botao('cred', bx, sy+56, bw, bh, 'CR\u00C9DITOS', true, function(){ UIManager.ir('creditos'); });
+    desenharTexto(ctx,'PROT\u00D3TIPO FASE 5', W/2, HH-8, '#6a6380', 1, 'centro');
+  },
+
+  renderJogo(ctx, tempo){
+    ctx.drawImage(Game.texturaMesa, 0, 0);
+    const tint = NIVEIS_DESCOBERTA[GameState.nivelDescoberta].tint;
+    if (tint){ ctx.fillStyle = tint; ctx.fillRect(0,0,W,HH); }
+    // HUD
+    ctx.fillStyle = PAL.painelEsc; ctx.fillRect(0,0,W,14);
+    ctx.fillStyle = PAL.escuro; ctx.fillRect(0,14,W,1);
+    iconeGema(ctx, 4, 4);
+    desenharTexto(ctx, fmt(GameState.fragmentos), 12, 5, PAL.texto, 1);
+    iconeReliquia(ctx, 58, 4);
+    desenharTexto(ctx, fmt(GameState.reliquias), 66, 5, PAL.reliquia, 1);
+    ctx.fillStyle = NIVEIS_DESCOBERTA[GameState.nivelDescoberta].cor;
+    ctx.fillRect(92, 5, 3, 5);
+    desenharTexto(ctx, 'NV'+(GameState.nivelDescoberta+1), 97, 5, NIVEIS_DESCOBERTA[GameState.nivelDescoberta].cor, 1);
+    desenharTexto(ctx, 'CART\u00D5ES:'+GameState.cartasRaspadas, W-4, 5, PAL.ciano, 1, 'direita');
+
+    // banner de evento
+    if (EventManager.evento && ((tempo*2)|0)%2===0){
+      desenharTexto(ctx, EventManager.evento.nome, W/2, 17, PAL.alerta, 1, 'centro');
+    }
+
+    // carta
+    if (CardManager.estado !== 'nenhum' && CardManager.baseCv){
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(CARD.x+2, CARD.y+3, CARD.w, CARD.h);
+      ctx.drawImage(CardManager.baseCv, CARD.x, CARD.y);
+      const alpha = CardManager.estado==='sumindo' ? clamp(1-CardManager.tempoSumir/0.4,0,1) : 1;
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(ScratchSystem.cv, CARD.x, CARD.y);
+      ctx.globalAlpha = 1;
+      if (CardManager.estado==='pronto' && CardManager.carta && CardManager.carta.tipo==='MISTERIOSA'){
+        ctx.fillStyle = PAL.painelEsc; ctx.fillRect(CARD.x+4, CARD.y+4, CARD.w-8, 9);
+        desenharTexto(ctx, 'CART\u00C3O '+CardManager.carta.tipoNome, CARD.x+CARD.w/2, CARD.y+6, CardManager.carta.cor, 1, 'centro');
+        desenharTexto(ctx, '+'+CardManager.carta.valor, CARD.x+44, CARD.y+46, PAL.ouro, 1);
+      }
+    } else {
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(CARD.x, CARD.y, CARD.w, CARD.h);
+      ctx.fillStyle = PAL.moldura;
+      ctx.fillRect(CARD.x,CARD.y,CARD.w,1); ctx.fillRect(CARD.x,CARD.y+CARD.h-1,CARD.w,1);
+      ctx.fillRect(CARD.x,CARD.y,1,CARD.h); ctx.fillRect(CARD.x+CARD.w-1,CARD.y,1,CARD.h);
+      desenharTexto(ctx,'SEM CART\u00C3O', W/2, CARD.y+32, '#6a6380', 1, 'centro');
+    }
+
+    // Raspador Mec\u00e2nico
+    const nvMaq = GameState.melhorias.maquina||0;
+    const MX = 133, MY = CARD.y+4;
+    const falha = EventManager.evento && EventManager.evento.id==='FALHA';
+    if (nvMaq >= 1){
+      ctx.fillStyle = '#2a2f3a'; ctx.fillRect(MX,MY,22,26);
+      ctx.fillStyle = '#4a5163'; ctx.fillRect(MX+1,MY+1,20,24);
+      ctx.fillStyle = '#2a2f3a'; ctx.fillRect(MX+1,MY+1,20,1);
+      iconeEngrenagem(ctx, MX+8, MY+9);
+      const ativa = GameState.autoLigada && AutomationManager.trabalhando;
+      let luz;
+      if (falha) luz = (((tempo*6)|0)%2===0) ? PAL.alerta : '#5a1020';
+      else if (!GameState.autoLigada) luz = PAL.alerta;
+      else luz = ativa ? ((((tempo*4)|0)%2===0) ? '#3ee08f' : '#b9ffe0') : '#3ee08f';
+      ctx.fillStyle = luz; ctx.fillRect(MX+18,MY+3,2,2);
+      desenharTexto(ctx,'AUTO', MX+11, MY+28, GameState.autoLigada?PAL.gema:'#6a6380',1,'centro');
+      this.botao('auto', MX, MY, 22, 34, '', true, function(){
+        GameState.autoLigada = !GameState.autoLigada; saveGame();
+      }, true);
+      if (ativa){
+        const p = AutomationManager.pontoAtual();
+        ctx.fillStyle = '#c8c8d8'; ctx.fillRect(Math.round(p.x)-1, Math.round(p.y)-1, 3, 3);
+        ctx.fillStyle = PAL.ouro; ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
+      }
+    } else {
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(MX,MY,22,26);
+      ctx.fillStyle = PAL.cinza;
+      for (let i=0;i<22;i+=4){ ctx.fillRect(MX+i,MY,1,1); ctx.fillRect(MX+i,MY+25,1,1); }
+      for (let i=0;i<26;i+=4){ ctx.fillRect(MX,MY+i,1,1); ctx.fillRect(MX+21,MY+i,1,1); }
+      desenharTexto(ctx,'?', MX+11, MY+10, PAL.cinza,1,'centro');
+      desenharTexto(ctx,'M\u00C1QUINA', MX+11, MY+28, PAL.cinza,1,'centro');
+      this.botao('maq', MX, MY, 22, 34, '', true, function(){
+        GameState.abaMelhoria = 'M\u00C1QUINA'; UIManager.ir('melhorias');
+      }, true);
+    }
+
+    const progY = HH-41, mainY = HH-32, upgY = HH-16;
+    const lim = ScratchSystem.limiar();
+    const pct = (CardManager.estado==='raspando'||CardManager.estado==='pronto') ? ScratchSystem.pct : 0;
+    ctx.fillStyle = PAL.painelEsc; ctx.fillRect(30,progY,70,7);
+    ctx.fillStyle = PAL.ciano; ctx.fillRect(31,progY+1,Math.floor(68*clamp(pct,0,1)),5);
+    ctx.fillStyle = PAL.texto; ctx.fillRect(30+Math.floor(70*lim),progY,1,7);
+    desenharTexto(ctx, Math.floor(pct*100)+'%', 104, progY+1, PAL.texto, 1);
+    if (CardManager.perfeita) desenharTexto(ctx,'PERFEITO!', 130, progY+1, PAL.ouro, 1);
+
+    if (CardManager.estado==='nenhum'){
+      const oferta = CardManager.oferta || 'COMUM';
+      const gratis = GameState.cartasRaspadas === 0 || CardManager.proximaGratis;
+      let custo = gratis ? 0 : (TIPOS_CARTA[oferta] ? TIPOS_CARTA[oferta].custo : 4);
+      custo = Math.floor(custo * EventManager.custoCartaMult());
+      const nomeVis = oferta==='MISTERIOSA' ? '???' : (TIPOS_CARTA[oferta] ? TIPOS_CARTA[oferta].nome : 'COMUM');
+      const rot = gratis ? 'CART\u00C3O '+nomeVis+' (GR\u00C1TIS)' : 'CART\u00C3O '+nomeVis+' ('+custo+')';
+      this.botao('comprar', 30, mainY, 100, 12, rot, EconomyManager.pode(custo), function(){ CardManager.comprar(); });
+    } else if (CardManager.estado==='pronto'){
+      const ganho = RewardSystem.calcular(CardManager.carta, CardManager.perfeita);
+      const pisca = ((tempo*3)|0)%2===0;
+      this.botao('coletar', 30, mainY, 100, 12, 'COLETAR +'+fmt(ganho), true, function(){ CardManager.coletar(); });
+      if (pisca){ ctx.fillStyle = PAL.ouro; ctx.fillRect(29,mainY-1,102,1); ctx.fillRect(29,mainY+12,102,1); }
+    } else {
+      this.botao('raspe', 30, mainY, 100, 12, 'RASPE O CART\u00C3O...', false, function(){});
+    }
+
+    this.botao('melh', 30, upgY, 100, 12, 'MELHORIAS', true, function(){ UIManager.ir('melhorias'); });
+    desenharTexto(ctx,'RAIO:'+UpgradeManager.raio(), 134, upgY+4, PAL.ciano, 1);
+
+    if (Tutorial.ativo()){
+      ctx.fillStyle = 'rgba(12,10,20,0.92)'; ctx.fillRect(6,16,148,24);
+      ctx.fillStyle = PAL.ouro; ctx.fillRect(6,16,148,1); ctx.fillRect(6,39,148,1);
+      const linhas = quebrarLinhas(Tutorial.textos[GameState.passoTutorial], 34);
+      for (let i=0;i<Math.min(linhas.length,3);i++) desenharTexto(ctx, linhas[i], 10, 20+i*6, PAL.texto, 1);
+      this.botao('pular', 128, 33, 24, 6, 'PULAR', true, function(){ Tutorial.pular(); });
+    }
+
+    // relat\u00f3rio offline
+    if (Game.relatorioOffline){
+      const r = Game.relatorioOffline;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,HH);
+      const by = clamp(Math.floor(HH/2)-34, 16, HH-88);
+      ctx.fillStyle = PAL.painelEsc; ctx.fillRect(10,by,140,68);
+      ctx.fillStyle = PAL.ouro; ctx.fillRect(10,by,140,1); ctx.fillRect(10,by+67,140,1);
+      desenharTexto(ctx,'ENQUANTO VOC\u00CA ESTAVA FORA...', W/2, by+5, PAL.ouro,1,'centro');
+      desenharTexto(ctx,'TEMPO: '+fmtTempo(r.seg), 16, by+16, PAL.texto,1);
+      desenharTexto(ctx,'CART\u00D5ES PROCESSADOS: '+fmt(r.cartas), 16, by+25, PAL.texto,1);
+      desenharTexto(ctx,'+'+fmt(r.frag)+' FRAGMENTOS', 16, by+34, PAL.gema,1);
+      desenharTexto(ctx,'+'+fmt(r.rel)+' REL\u00CDQUIAS', 16, by+43, PAL.reliquia,1);
+      this.botao('bloqueio', 0, 0, W, HH, '', true, function(){}, true);
+      this.botao('coletarOff', 40, by+52, 80, 12, 'COLETAR', true, function(){
+        EconomyManager.adicionar(Game.relatorioOffline.frag);
+        GameState.reliquias += Game.relatorioOffline.rel;
+        GameState.totalReliquias += Game.relatorioOffline.rel;
+        Game.relatorioOffline = null;
+        AudioManager.sfx('collect');
+        saveGame();
+      });
+    }
+  },
+
+  renderMelhorias(ctx){
+    ctx.fillStyle = PAL.fundo; ctx.fillRect(0,0,W,HH);
+    desenharTexto(ctx,'MELHORIAS', W/2, 6, PAL.ouro, 1, 'centro');
+    iconeGema(ctx, 6, 15); desenharTexto(ctx, fmt(GameState.fragmentos), 14, 16, PAL.texto, 1);
+    iconeReliquia(ctx, 60, 15); desenharTexto(ctx, fmt(GameState.reliquias), 68, 16, PAL.reliquia, 1);
+    desenharTexto(ctx, 'N\u00CDVEL '+(GameState.nivelDescoberta+1), W-4, 16, NIVEIS_DESCOBERTA[GameState.nivelDescoberta].cor, 1, 'direita');
+
+    const abas = ['RASPAGEM','SORTE','PESQUISA','M\u00C1QUINA'];
+    for (let i=0;i<4;i++){
+      this.botao('aba'+i, 8+i*38, 26, 36, 9, abas[i], true, (function(a){ return function(){ GameState.abaMelhoria = a; }; })(abas[i]));
+      if (GameState.abaMelhoria === abas[i]){
+        ctx.fillStyle = PAL.ouro; ctx.fillRect(8+i*38, 36, 36, 1);
+      }
+    }
+
+    let y = 42;
+    for (const id in MELHORIAS){
+      const d = MELHORIAS[id];
+      if (d.cat !== GameState.abaMelhoria) continue;
+      const nv = UpgradeManager.nivel(id);
+      const desb = UpgradeManager.desbloqueada(id);
+      const maxed = nv >= d.max;
+      const custo = UpgradeManager.custo(id);
+      const ativo = desb && !maxed && UpgradeManager.podeComprar(id);
+      const hov = this.cursorSobre(20,y,120,18);
+      ctx.fillStyle = desb ? (hov ? '#332a52' : PAL.painel) : PAL.painelEsc;
+      ctx.fillRect(20,y,120,18);
+      ctx.fillStyle = desb ? '#4a3f6e' : '#2a2340';
+      ctx.fillRect(20,y,120,1); ctx.fillRect(20,y,1,18);
+      ctx.fillStyle = PAL.escuro;
+      ctx.fillRect(20,y+17,120,1); ctx.fillRect(139,y,1,18);
+      if (hov && desb){
+        ctx.fillStyle = PAL.ouro;
+        ctx.fillRect(20,y,120,1); ctx.fillRect(20,y+17,120,1);
+      }
+      desenharTexto(ctx, d.nome+' NV'+nv, 24, y+3, desb?PAL.texto:'#6a6380', 1);
+      desenharTexto(ctx, d.desc, 24, y+11, PAL.cinza, 1);
+      if (!desb){
+        desenharTexto(ctx, 'REQ N\u00CDVEL '+d.tier, 136, y+8, PAL.alerta, 1, 'direita');
+      } else if (maxed){
+        desenharTexto(ctx, 'NV M\u00C1X', 136, y+8, PAL.ouro, 1, 'direita');
+      } else {
+        const corC = d.moeda==='frag' ? PAL.gema : PAL.reliquia;
+        desenharTexto(ctx, '('+fmt(custo)+(d.moeda==='frag'?' FRAG':' REL')+')', 136, y+8, ativo?corC:'#6a6380', 1, 'direita');
+      }
+      this.botao('up_'+id, 20, y, 120, 18, '', ativo, (function(k){ return function(){ UpgradeManager.comprar(k); }; })(id), true);
+      y += 20;
+    }
+    this.botao('voltar', 25, HH-20, 110, 12, 'VOLTAR', true, function(){ UIManager.ir('jogo'); });
+  },
+
+  renderConfig(ctx){
+    ctx.fillStyle = PAL.fundo; ctx.fillRect(0,0,W,HH);
+    desenharTexto(ctx,'CONFIGURA\u00C7\u00D5ES', W/2, 12, PAL.ouro, 1, 'centro');
+    const bx=25, bw=110;
+    this.botao('vib', bx, 30, bw, 12, 'VIBRA\u00C7\u00C3O DA TELA: '+(GameState.config.vibracao?'LIGADA':'DESLIG.'), true, function(){
+      GameState.config.vibracao = !GameState.config.vibracao; saveGame();
+    });
+    this.botao('som', bx, 46, bw, 12, 'SOM: '+(GameState.config.som?'LIGADO':'DESLIG.'), true, function(){
+      GameState.config.som = !GameState.config.som; saveGame();
+      if (GameState.config.som) AudioManager.ui('click');
+    });
+    this.botao('salvar', bx, 62, bw, 12, 'SALVAR AGORA', true, function(){ saveGame(); FloatTexts.add(80,58,'SALVO!',PAL.gema); });
+    const rotApagar = this.confirmarApagar ? 'CONFIRMAR APAGAR?' : 'APAGAR SAVE';
+    this.botao('apagar', bx, 78, bw, 12, rotApagar, true, function(){
+      if (!UIManager.confirmarApagar){ UIManager.confirmarApagar = true; UIManager.tempoConfirmar = 3; }
+      else { SaveManager.apagar(); UIManager.confirmarApagar = false; location.reload(); }
+    });
+    this.botao('voltar', bx, HH-20, bw, 12, 'VOLTAR', true, function(){ UIManager.ir('titulo'); });
+  },
+
+  renderColecao(ctx){
+    ctx.fillStyle = PAL.fundo; ctx.fillRect(0,0,W,HH);
+    desenharTexto(ctx,'LIVRO DE REL\u00CDQUIAS', W/2, 8, PAL.ouro, 1, 'centro');
+    this.botao('abaRel', 8, 18, 70, 9, 'REL\u00CDQUIAS', true, function(){ GameState.abaColecao='REL'; });
+    this.botao('abaSel', 82, 18, 70, 9, 'SELOS', true, function(){ GameState.abaColecao='SEL'; });
+    ctx.fillStyle = PAL.ouro;
+    if (GameState.abaColecao==='REL') ctx.fillRect(8, 28, 70, 1); else ctx.fillRect(82, 28, 70, 1);
+
+    let info = '';
+    if (GameState.abaColecao==='REL'){
+      desenharTexto(ctx,'COMPLETO: '+CollectionManager.pct()+'%', 8, 34, PAL.ciano, 1);
+      desenharTexto(ctx,'COMBOS: '+Object.keys(CollectionManager.combos).length, W-8, 34, PAL.ouro, 1, 'direita');
+      for (let i=0;i<SIMBOLOS.length;i++){
+        const s = SIMBOLOS[i];
+        const col = i%3, lin = Math.floor(i/3);
+        const x = 26 + col*38, y = 44 + lin*26;
+        const d = CollectionManager.dados[s.id];
+        const desc = d && d.qtd>0;
+        ctx.fillStyle = desc ? PAL.painel : PAL.painelEsc;
+        ctx.fillRect(x,y,28,22);
+        ctx.fillStyle = PAL.escuro; ctx.fillRect(x+1,y+1,26,20);
+        if (desc){
+          desenharSimbolo(ctx, s.id, x+10, y+4);
+          desenharTexto(ctx, fmt(d.qtd), x+26, y+14, PAL.texto, 1, 'direita');
+          if (this.cursorSobre(x,y,28,22)) info = s.id+' '+fmt(d.qtd)+' - '+fmtData(d.primeira);
+        } else {
+          desenharTexto(ctx,'?', x+14, y+8, '#6a6380', 1, 'centro');
+          if (this.cursorSobre(x,y,28,22)) info = '???';
+        }
+      }
+      if (!info) info = 'RASPE CART\u00D5ES PARA DESCOBRIR REL\u00CDQUIAS.';
+    } else {
+      desenharTexto(ctx,'SELOS: '+AchievementManager.selos.length+'/'+AchievementManager.defs.length, 8, 34, PAL.ciano, 1);
+      desenharTexto(ctx,'CADA SELO +1% VALOR', W-8, 34, PAL.ouro, 1, 'direita');
+      for (let i=0;i<AchievementManager.defs.length;i++){
+        const d = AchievementManager.defs[i];
+        const col = i%3, lin = Math.floor(i/3);
+        const x = 26 + col*38, y = 44 + lin*26;
+        const tem = AchievementManager.tem(d.id);
+        ctx.fillStyle = tem ? PAL.painel : PAL.painelEsc;
+        ctx.fillRect(x,y,28,22);
+        ctx.fillStyle = PAL.escuro; ctx.fillRect(x+1,y+1,26,20);
+        if (tem){
+          iconeEstrela(ctx, x+10, y+8);
+        } else {
+          desenharTexto(ctx,'?', x+14, y+8, '#6a6380', 1, 'centro');
+        }
+        if (this.cursorSobre(x,y,28,22)) info = d.nome+' - '+d.desc;
+      }
+      if (!info) info = 'COMPLETE DESAFIOS PARA GANHAR SELOS.';
+    }
+    const linhas = quebrarLinhas(info, 36);
+    for (let i=0;i<Math.min(linhas.length,2);i++) desenharTexto(ctx, linhas[i], 8, HH-36+i*7, PAL.texto, 1);
+    this.botao('voltar', 25, HH-20, 110, 12, 'VOLTAR', true, function(){ UIManager.ir('titulo'); });
+  },
+
+  renderCreditos(ctx){
+    ctx.fillStyle = PAL.fundo; ctx.fillRect(0,0,W,HH);
+    desenharTexto(ctx,'CR\u00C9DITOS', W/2, 12, PAL.ouro, 1, 'centro');
+    const linhas = ['RASPA REL\u00CDQUIAS','UM JOGO ORIGINAL','DE DESCOBERTA.','','TRILHA DO MENU:',
+      'SCRATCH, SCRATCH,','SCRATCH....MP3','','FEITO COM CANVAS 2D.','OBRIGADO POR JOGAR!'];
+    let y = 28;
+    for (const l of linhas){ if (l) desenharTexto(ctx,l,W/2,y,PAL.texto,1,'centro'); y += 9; }
+    this.botao('voltar', 25, HH-20, 110, 12, 'VOLTAR', true, function(){ UIManager.ir('titulo'); });
+  }
+};
+
+/* ---------------- Entrada + cursor ---------------- */
+const InputManager = {
+  raspando:false, ultimoToque:0, pos:null,
+  cursorVisivel:false, fila:[], gesto:false,
+  init(cv){
+    const self = this;
+    cv.addEventListener('touchstart', protegido(function(e){
+      e.preventDefault(); self.ultimoToque = Date.now();
+      self.cursorVisivel = true;
+      const t = e.changedTouches[0]; self.down(t.clientX, t.clientY);
+    }), {passive:false});
+    cv.addEventListener('touchmove', protegido(function(e){
+      e.preventDefault();
+      const t = e.changedTouches[0]; self.move(t.clientX, t.clientY);
+    }), {passive:false});
+    cv.addEventListener('touchend', protegido(function(e){
+      e.preventDefault(); self.up(); self.cursorVisivel = false;
+    }), {passive:false});
+    cv.addEventListener('mousedown', protegido(function(e){
+      if (Date.now()-self.ultimoToque < 500) return;
+      self.cursorVisivel = true; self.down(e.clientX, e.clientY);
+    }));
+    window.addEventListener('mousemove', protegido(function(e){
+      if (Date.now()-self.ultimoToque < 500) return;
+      self.cursorVisivel = true; self.hover(e.clientX, e.clientY);
+      if (self.raspando) self.move(e.clientX, e.clientY);
+    }));
+    window.addEventListener('mouseup', protegido(function(){
+      if (Date.now()-self.ultimoToque < 500) return; self.up();
+    }));
+  },
+  paraInterno(cx, cy){
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: (cx - r.left - View.ox) / View.escX,
+      y: (cy - r.top - View.oy) / View.escY
+    };
+  },
+  hover(cx, cy){ this.pos = this.paraInterno(cx, cy); },
+  down(cx, cy){
+    const p = this.paraInterno(cx, cy);
+    this.pos = p;
+    if (!this.gesto){
+      this.gesto = true;
+      AudioSynth.garantir();
+      if (UIManager.tela === 'titulo') AudioManager.tocarBGM('menu');
+    }
+    if (UIManager.tocar(p.x, p.y)) return;
+    if (UIManager.tela==='jogo' && (CardManager.estado==='raspando' || CardManager.estado==='pronto')){
+      if (p.x>=CARD.x-2 && p.x<=CARD.x+CARD.w+2 && p.y>=CARD.y-2 && p.y<=CARD.y+CARD.h+2){
+        this.raspando = true;
+        this.enfileirar(p);
+      }
+    }
+  },
+  move(cx, cy){
+    const p = this.paraInterno(cx, cy);
+    this.pos = p;
+    if (this.raspando) this.enfileirar(p);
+  },
+  enfileirar(p){
+    if (this.fila.length < 32) this.fila.push(p);
+  },
+  up(){ this.raspando = false; ScratchSystem.fimTraco(); },
+  processarFila(){
+    if (!this.fila.length) return;
+    AudioManager.sfx('scratch');
+    const f = this.fila;
+    this.fila = [];
+    for (const p of f) CardManager.rasparPonto(p.x, p.y);
+  }
+};
+
+/* ---------------- Vis\u00e3o ---------------- */
+const View = { escX:1, escY:1, ox:0, oy:0, modo:'cheio', padrao:null };
+
+/* ---------------- Jogo ---------------- */
+const Game = {
+  tempo:0, pausado:false, tremorT:0, tremorMag:0, flash:0,
+  autoSaveT:0, estrelas:[], texturaMesa:null, curSeta:null, curRaspador:null,
+  relatorioOffline:null,
+  init(){
+    let s = 42;
+    const r = function(){ s = (s*16807)%2147483647; return (s%1000)/1000; };
+    for (let i=0;i<80;i++) this.estrelas.push([Math.floor(r()*W), Math.floor(r()*288), r()<0.5?0:1]);
+    this.regerarMesa();
+    const pc = mkCanvas(8,8);
+    const p = pc.getContext('2d');
+    p.fillStyle = '#0b0913'; p.fillRect(0,0,8,8);
+    p.fillStyle = '#141024'; p.fillRect(0,0,4,4); p.fillRect(4,4,4,4);
+    p.fillStyle = '#1b1630'; p.fillRect(1,1,1,1); p.fillRect(5,5,1,1);
+    View.padrao = ctx.createPattern(pc, 'repeat');
+    this.fazerCursores();
+  },
+  fazerCursores(){
+    const a = mkCanvas(7,8);
+    const ca = a.getContext('2d');
+    const shape = ['1000000','1100000','1110000','1111000','1111100','1111110','1100000','1000000'];
+    const pintar = function(cor, dx, dy){
+      ca.fillStyle = cor;
+      for (let ry=0; ry<8; ry++) for (let rx=0; rx<7; rx++){
+        if (shape[ry][rx]==='1') ca.fillRect(rx+dx, ry+dy, 1, 1);
+      }
+    };
+    pintar('#0c0a14',1,0); pintar('#0c0a14',0,1); pintar('#0c0a14',1,1);
+    pintar('#f4f4f4',0,0);
+    this.curSeta = a;
+    const m = mkCanvas(9,9);
+    const cm = m.getContext('2d');
+    cm.fillStyle = '#0c0a14';
+    cm.beginPath(); cm.arc(4.5,4.5,4.4,0,6.2832); cm.fill();
+    cm.fillStyle = '#8a6a1f';
+    cm.beginPath(); cm.arc(4.5,4.5,3.6,0,6.2832); cm.fill();
+    cm.fillStyle = PAL.ouro;
+    cm.beginPath(); cm.arc(4.5,4.5,2.8,0,6.2832); cm.fill();
+    cm.fillStyle = '#ffffff'; cm.fillRect(2,2,1,1);
+    this.curRaspador = m;
+  },
+  regerarMesa(){
+    this.texturaMesa = mkCanvas(W, HH);
+    const c = this.texturaMesa.getContext('2d');
+    c.fillStyle = PAL.madeira0; c.fillRect(0,0,W,HH);
+    c.fillStyle = PAL.madeira1;
+    for (let y=0;y<HH;y+=12) c.fillRect(0,y,W,1);
+    for (let y=0;y<HH;y+=12) for (let x=((y/12)%2)*8; x<W; x+=17) c.fillRect(x,y,1,12);
+    c.fillStyle = PAL.madeira2;
+    for (let y=2;y<HH;y+=5) for (let x=(y%2)*3; x<W; x+=7) c.fillRect(x,y,2,1);
+  },
+  tremor(t, mag){ if (GameState.config.vibracao){ this.tremorT = t; this.tremorMag = mag; } },
+  infoDebug(){
+    return {
+      frag: GameState.fragmentos,
+      rel: GameState.reliquias,
+      cartao: CardManager.carta ? CardManager.carta.tipoNome : (CardManager.oferta ? 'OFERTA' : 'NENHUM'),
+      raspa: Math.floor(ScratchSystem.pct*100)+'%',
+      auto: AutomationManager.status(),
+      nivel: String(GameState.nivelDescoberta+1),
+      save: SaveManager.ultimoSave,
+      evento: EventManager.status()
+    };
+  },
+  update(dt){
+    this.tempo += dt; GameState.tempoJogo += dt;
+    if (this.tremorT > 0) this.tremorT -= dt;
+    if (this.flash > 0) this.flash -= dt;
+    if (UIManager.confirmarApagar && UIManager.tela==='config'){
+      UIManager.tempoConfirmar -= dt;
+      if (UIManager.tempoConfirmar <= 0) UIManager.confirmarApagar = false;
+    }
+    InputManager.processarFila();
+    updateAutomation(dt);
+    updateEvents(dt);
+    CardManager.update(dt);
+    updateParticles(dt);
+    FloatTexts.update(dt);
+    AchievementManager.update(dt);
+    const nd = nivelDescobertaAtual();
+    if (nd !== GameState.nivelDescoberta){
+      GameState.nivelDescoberta = nd;
+      this.flash = 0.25; this.tremor(0.25, 1);
+      FloatTexts.add(W/2, 40, 'N\u00CDVEL DE DESCOBERTA '+(nd+1), PAL.ouro);
+      FloatTexts.add(W/2, 50, NIVEIS_DESCOBERTA[nd].nome, NIVEIS_DESCOBERTA[nd].cor);
+      AudioManager.sfx('tier');
+      saveGame();
+    }
+    this.autoSaveT += dt;
+    if (this.autoSaveT > 15){ this.autoSaveT = 0; if (UIManager.tela==='jogo') saveGame(); }
+  },
+  render(){
+    const g = ctxInt;
+    g.setTransform(1,0,0,1,0,0);
+    g.imageSmoothingEnabled = false;
+    g.fillStyle = PAL.fundo; g.fillRect(0,0,W,HH);
+    let ox=0, oy=0;
+    if (this.tremorT > 0){ ox = rndi(-this.tremorMag,this.tremorMag); oy = rndi(-this.tremorMag,this.tremorMag); }
+    g.translate(ox, oy);
+    UIManager.render(g, this.tempo);
+    ParticleManager.render(g);
+    FloatTexts.render(g);
+    if (InputManager.cursorVisivel && InputManager.pos){
+      const p = InputManager.pos;
+      const sobreCarta = UIManager.tela==='jogo' &&
+        (CardManager.estado==='raspando'||CardManager.estado==='pronto') &&
+        p.x>=CARD.x && p.x<=CARD.x+CARD.w && p.y>=CARD.y && p.y<=CARD.y+CARD.h;
+      if (sobreCarta){
+        const off = InputManager.raspando ? 1 : 0;
+        g.drawImage(this.curRaspador, Math.round(p.x)-4+off, Math.round(p.y)-4+off);
+      } else {
+        g.drawImage(this.curSeta, Math.round(p.x), Math.round(p.y));
+      }
+    }
+    if (this.flash > 0){ g.fillStyle = 'rgba(255,255,255,'+clamp(this.flash*3,0,0.8)+')'; g.fillRect(0,0,W,HH); }
+    const c = ctx;
+    c.setTransform(1,0,0,1,0,0);
+    c.imageSmoothingEnabled = false;
+    c.fillStyle = View.padrao || '#0b0913';
+    c.fillRect(0,0,canvas.width,canvas.height);
+    c.drawImage(telaInterna, View.ox, View.oy, Math.floor(W*View.escX), Math.floor(HH*View.escY));
+    if (View.modo === 'largo'){
+      c.fillStyle = PAL.moldura;
+      c.fillRect(View.ox-2, 0, 2, canvas.height);
+      c.fillRect(View.ox + Math.floor(W*View.escX), 0, 2, canvas.height);
+    }
+  }
+};
+
+/* ---------------- Loop ---------------- */
+let canvas = null, ctx = null, telaInterna = null, ctxInt = null, ultimoT = 0;
+function loop(t){
+  requestAnimationFrame(loop);
+  const dt = Math.min((t - ultimoT)/1000, 0.1);
+  ultimoT = t;
+  DebugManager.atualizarStats(dt);
+  if (!Game.pausado){
+    try { Game.update(dt); } catch(e){ DebugManager.erro('UPDATE: '+e.message); }
+  }
+  try { Game.render(); } catch(e){ DebugManager.erro('RENDER: '+e.message); }
+}
+function pause(){ Game.pausado = true; saveGame(); }
+function resume(){ Game.pausado = false; ultimoT = performance.now(); }
+
+function ajustar(){
+  canvas.width = Math.max(1, Math.floor(window.innerWidth));
+  canvas.height = Math.max(1, Math.floor(window.innerHeight));
+  const aspecto = canvas.height / canvas.width;
+  let hh = Math.round(W * aspecto);
+  if (hh >= 144){
+    HH = clamp(hh, 144, 288);
+    View.modo = 'cheio';
+    View.escX = canvas.width / W;
+    View.escY = canvas.height / HH;
+    View.ox = 0; View.oy = 0;
+  } else {
+    HH = 144;
+    const s = canvas.height / 144;
+    View.modo = 'largo';
+    View.escX = s; View.escY = s;
+    View.ox = Math.floor((canvas.width - W*s)/2); View.oy = 0;
+  }
+  telaInterna.width = W; telaInterna.height = HH;
+  CARD.y = clamp(Math.floor((HH - 48 - 18 - 70)/2) + 18, 18, HH - 48 - 70 - 2);
+  Game.regerarMesa();
+}
+
+function init(){
+  canvas = document.getElementById('tela');
+  ctx = canvas.getContext('2d');
+  telaInterna = mkCanvas(W, HH);
+  ctxInt = telaInterna.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  DebugManager.init();
+  ParticleManager.init();
+  ScratchSystem.init();
+  ajustar();
+  Game.init();
+  const carregado = loadGame();
+  GameState.nivelDescoberta = nivelDescobertaAtual();
+  if (carregado) Game.relatorioOffline = calcularOffline(SaveManager.ultimoT);
+  console.log('RASPA REL\u00CDQUIAS — FASE 5 iniciada. Save: '+(carregado?'carregado':'novo'));
+  InputManager.init(canvas);
+  window.addEventListener('resize', protegido(ajustar));
+  window.addEventListener('orientationchange', protegido(ajustar));
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) pause(); else resume();
+  });
+  window.addEventListener('pagehide', protegido(saveGame));
+  ultimoT = performance.now();
+  requestAnimationFrame(loop);
+}
+window.addEventListener('load', function(){
+  try { init(); } catch(e){ DebugManager.erro('INIT: '+e.message); }
+});
+</script>
+</body>
+</html>
